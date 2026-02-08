@@ -158,6 +158,20 @@ export default function Home() {
           </button>
         </div>
       </div>
+      <div className="mx-auto flex max-w-6xl items-center gap-3 px-6 pb-4 md:hidden">
+        <button
+          className="flex-1 rounded-full border border-[#1f3d2d]/30 px-4 py-2 text-sm font-semibold text-[#1f3d2d] transition hover:border-[#1f3d2d]"
+          onClick={() => setLoginOpen(true)}
+        >
+          Manage property
+        </button>
+        <button
+          className="flex-1 rounded-full bg-[#1f3d2d] px-4 py-2 text-sm font-semibold text-[#f7f3ea] transition hover:bg-[#173124]"
+          onClick={() => setSignupOpen(true)}
+        >
+          List a plot
+        </button>
+      </div>
 
       <main className="mx-auto grid max-w-7xl gap-10 px-6 pb-16 pt-4 lg:grid-cols-[260px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)] lg:items-start">
         <section className="order-2 hidden min-h-[720px] flex-col rounded-3xl bg-[#fbf8f3] p-5 shadow-[0_20px_60px_-40px_rgba(20,17,15,0.5)] lg:order-1 lg:flex">

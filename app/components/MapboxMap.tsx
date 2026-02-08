@@ -64,6 +64,8 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
   const hasSatellite = Boolean(
     mapTilerKey && mapTilerKey !== "YOUR_MAPTILER_KEY"
   );
+  const fallbackStyleUrl =
+    "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
 
   const visiblePlots = useMemo(
     () => (activePlot ? [activePlot] : plots),
@@ -91,16 +93,16 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
     if (!containerRef.current || mapRef.current) return;
 
     const baseStyleUrl = hasSatellite
-      ? `https://api.maptiler.com/maps/streets/style.json?key=${mapTilerKey}`
-      : "https://demotiles.maplibre.org/style.json";
+      ? `https://api.maptiler.com/maps/streets-v2/style.json?key=${mapTilerKey}`
+      : fallbackStyleUrl;
 
     const map = new maplibregl.Map({
       container: containerRef.current,
       style: baseStyleUrl,
       center: [36.668, -1.248],
       zoom: 12.6,
-      pitch: 45,
-      bearing: -10,
+      pitch: 0,
+      bearing: 0,
     });
 
     mapRef.current = map;
@@ -165,9 +167,11 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
       });
     };
 
+    const handleResize = () => map.resize();
     map.on("load", () => {
       addPlotLayers();
       addMarkers();
+      map.resize();
     });
 
     map.on("style.load", () => {
@@ -184,7 +188,10 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
       }
     });
 
+    window.addEventListener("resize", handleResize);
+
     return () => {
+      window.removeEventListener("resize", handleResize);
       map.remove();
       mapRef.current = null;
     };
@@ -263,8 +270,8 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
   useEffect(() => {
     if (!mapRef.current) return;
     const baseStyleUrl = hasSatellite
-      ? `https://api.maptiler.com/maps/streets/style.json?key=${mapTilerKey}`
-      : "https://demotiles.maplibre.org/style.json";
+      ? `https://api.maptiler.com/maps/streets-v2/style.json?key=${mapTilerKey}`
+      : fallbackStyleUrl;
     mapRef.current.setStyle(
       isSatellite && hasSatellite
         ? `https://api.maptiler.com/maps/hybrid/style.json?key=${mapTilerKey}`
@@ -273,7 +280,7 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
   }, [hasSatellite, isSatellite, mapTilerKey]);
 
   return (
-    <div className="relative h-[720px] w-full overflow-hidden rounded-[32px] border border-[#eadfce] shadow-[0_30px_70px_-45px_rgba(20,17,15,0.55)]">
+    <div className="relative h-[70vh] min-h-[520px] w-full overflow-hidden rounded-[32px] border border-[#eadfce] bg-[#e8dccb] shadow-[0_30px_70px_-45px_rgba(20,17,15,0.55)] md:h-[720px]">
       <div className="absolute left-5 top-5 z-10 flex flex-wrap gap-2 rounded-full bg-white/90 px-3 py-2 text-xs font-semibold text-[#1f3d2d] shadow-sm backdrop-blur">
         <button
           type="button"
