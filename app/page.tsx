@@ -1,17 +1,22 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import MapboxMap, { type Plot } from "./components/MapboxMap";
+import { auth, db, storage } from "../lib/firebase";
+import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from "firebase/auth";
+import { collection, doc, getDocs, serverTimestamp, setDoc } from "firebase/firestore";
+import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 
 export default function Home() {
   const router = useRouter();
+  const [remotePlots, setRemotePlots] = useState<Plot[]>([]);
   const plots: Plot[] = [
     {
       id: "PT-204",
       label: "Redwood Ridge",
       size: "2.6 acres",
-      price: "$48k",
+      price: "Ksh 4.8M",
       center: [36.6629, -1.2461],
       startPoint: [36.6606, -1.2435],
       polygon: [
@@ -31,7 +36,7 @@ export default function Home() {
       id: "PT-311",
       label: "Blue River Bend",
       size: "1.2 acres",
-      price: "$26k",
+      price: "Ksh 2.6M",
       center: [36.6781, -1.2412],
       startPoint: [36.6761, -1.2381],
       polygon: [
@@ -49,7 +54,7 @@ export default function Home() {
       id: "PT-517",
       label: "Koru Valley",
       size: "5.1 acres",
-      price: "$71k",
+      price: "Ksh 7.1M",
       center: [36.6504, -1.2596],
       startPoint: [36.6482, -1.2562],
       polygon: [
@@ -69,7 +74,7 @@ export default function Home() {
       id: "PT-622",
       label: "Mango Grove",
       size: "0.9 acres",
-      price: "$19k",
+      price: "Ksh 1.9M",
       center: [36.6694, -1.2624],
       startPoint: [36.6674, -1.2601],
       polygon: [
@@ -85,14 +90,68 @@ export default function Home() {
     },
   ];
 
+  useEffect(() => {
+    const loadListings = async () => {
+      const snapshot = await getDocs(collection(db, "listings"));
+      const mapped: Plot[] = [];
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data() as {
+          name?: string;
+          acres?: string;
+          price?: string;
+          amenities?: string[];
+          vendorName?: string;
+          vendorType?: "Company" | "Individual";
+          parcels?: { cleanPath?: { lat: number; lng: number }[] }[];
+        };
+        const cleanPath = data.parcels?.[0]?.cleanPath ?? [];
+        if (cleanPath.length < 3) return;
+        const polygon = cleanPath.map((point) => [point.lng, point.lat]) as [
+          number,
+          number
+        ][];
+        const center = polygon.reduce(
+          (acc, point) => [acc[0] + point[0], acc[1] + point[1]],
+          [0, 0]
+        );
+        const centerLngLat: [number, number] = [
+          center[0] / polygon.length,
+          center[1] / polygon.length,
+        ];
+        const priceLabel =
+          data.price && data.price.toLowerCase().includes("ksh")
+            ? data.price
+            : data.price
+            ? `Ksh ${data.price}`
+            : "Ksh 0";
+        mapped.push({
+          id: docSnap.id,
+          label: data.name || "Untitled",
+          size: data.acres || "",
+          price: priceLabel,
+          center: centerLngLat,
+          startPoint: polygon[0],
+          polygon,
+          vendor: data.vendorName || "Vendor",
+          vendorType: data.vendorType || "Individual",
+          amenities: data.amenities || [],
+        });
+      });
+      setRemotePlots(mapped);
+    };
+    loadListings();
+  }, []);
+
+  const allPlots = useMemo(() => [...remotePlots, ...plots], [remotePlots]);
+
   const vendorOptions = useMemo(
-    () => Array.from(new Set(plots.map((plot) => plot.vendor))),
-    [plots]
+    () => Array.from(new Set(allPlots.map((plot) => plot.vendor))),
+    [allPlots]
   );
   const amenityOptions = useMemo(
     () =>
-      Array.from(new Set(plots.flatMap((plot) => plot.amenities))).sort(),
-    [plots]
+      Array.from(new Set(allPlots.flatMap((plot) => plot.amenities))).sort(),
+    [allPlots]
   );
 
   const [selectedVendor, setSelectedVendor] = useState("All vendors");
@@ -111,9 +170,16 @@ export default function Home() {
   const [vendorPhone, setVendorPhone] = useState("");
   const [companyName, setCompanyName] = useState("");
   const [companyReg, setCompanyReg] = useState("");
+  const [companyRegFile, setCompanyRegFile] = useState<File | null>(null);
+  const [signupPassword, setSignupPassword] = useState("");
+  const [signupConfirm, setSignupConfirm] = useState("");
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState<string | null>(null);
 
   const filteredPlots = useMemo(() => {
-    return plots.filter((plot) => {
+    return allPlots.filter((plot) => {
       if (selectedVendor !== "All vendors" && plot.vendor !== selectedVendor) {
         return false;
       }
@@ -127,11 +193,82 @@ export default function Home() {
       }
       return true;
     });
-  }, [plots, selectedAmenities, selectedVendor, vendorType]);
+  }, [allPlots, selectedAmenities, selectedVendor, vendorType]);
+
+  const handleSignup = async () => {
+    setAuthError(null);
+    if (!vendorEmail || !signupPassword || !signupConfirm) {
+      setAuthError("Email and password are required.");
+      return;
+    }
+    if (signupPassword !== signupConfirm) {
+      setAuthError("Passwords do not match.");
+      return;
+    }
+    if (signupVendorType === "Individual" && !vendorName) {
+      setAuthError("Full name is required.");
+      return;
+    }
+    if (signupVendorType === "Company" && !companyName) {
+      setAuthError("Company name is required.");
+      return;
+    }
+    setAuthLoading(true);
+    try {
+      const credential = await createUserWithEmailAndPassword(
+        auth,
+        vendorEmail,
+        signupPassword
+      );
+      const userId = credential.user.uid;
+      let registrationDocUrl = "";
+      if (signupVendorType === "Company" && companyRegFile) {
+        const fileRef = ref(
+          storage,
+          `vendor_docs/${userId}/company-registration-${companyRegFile.name}`
+        );
+        await uploadBytes(fileRef, companyRegFile);
+        registrationDocUrl = await getDownloadURL(fileRef);
+      }
+      await setDoc(doc(db, "vendors", userId), {
+        type: signupVendorType,
+        name: signupVendorType === "Individual" ? vendorName : companyName,
+        email: vendorEmail,
+        phone: vendorPhone,
+        companyRegNumber: signupVendorType === "Company" ? companyReg : "",
+        registrationDocUrl,
+        createdAt: serverTimestamp(),
+      });
+      setSignupOpen(false);
+      router.push("/vendor");
+    } catch (error) {
+      setAuthError("Signup failed. Check your details and try again.");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleLogin = async () => {
+    setAuthError(null);
+    if (!loginEmail || !loginPassword) {
+      setAuthError("Email and password are required.");
+      return;
+    }
+    setAuthLoading(true);
+    try {
+      await signInWithEmailAndPassword(auth, loginEmail, loginPassword);
+      setLoginOpen(false);
+      router.push("/vendor");
+    } catch (error) {
+      setAuthError("Login failed. Check your credentials.");
+    } finally {
+      setAuthLoading(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,_#f9f1e6,_#f2ede4_55%,_#efe7d8)] text-[#14110f]">
-      <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-6">
+      <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-6 sm:px-6">
         <div className="flex items-center gap-3">
           <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#1f3d2d] text-lg font-semibold text-[#f4f1ea]">
             PT
@@ -158,7 +295,7 @@ export default function Home() {
           </button>
         </div>
       </div>
-      <div className="mx-auto flex max-w-6xl items-center gap-3 px-6 pb-4 md:hidden">
+      <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 pb-4 sm:px-6 md:hidden">
         <button
           className="flex-1 rounded-full border border-[#1f3d2d]/30 px-4 py-2 text-sm font-semibold text-[#1f3d2d] transition hover:border-[#1f3d2d]"
           onClick={() => setLoginOpen(true)}
@@ -173,7 +310,7 @@ export default function Home() {
         </button>
       </div>
 
-      <main className="mx-auto grid max-w-7xl gap-10 px-6 pb-16 pt-4 lg:grid-cols-[260px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)] lg:items-start">
+      <main className="mx-auto grid max-w-7xl gap-8 px-4 pb-16 pt-4 sm:px-6 lg:grid-cols-[260px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)] lg:items-start">
         <section className="order-2 hidden min-h-[720px] flex-col rounded-3xl bg-[#fbf8f3] p-5 shadow-[0_20px_60px_-40px_rgba(20,17,15,0.5)] lg:order-1 lg:flex">
           <p className="text-xs uppercase tracking-[0.35em] text-[#c77d4b]">
             Live map
@@ -300,11 +437,11 @@ export default function Home() {
             }))}
           />
 
-          <div className="pointer-events-none absolute left-6 top-6 rounded-full bg-white/80 px-3 py-1 text-xs font-semibold text-[#1f3d2d] backdrop-blur">
+          <div className="pointer-events-none absolute left-4 top-4 rounded-full bg-white/80 px-3 py-1 text-xs font-semibold text-[#1f3d2d] backdrop-blur sm:left-6 sm:top-6">
             Western District
           </div>
 
-          <div className="absolute right-6 top-6 z-30 lg:hidden">
+          <div className="absolute right-4 top-4 z-30 lg:hidden sm:right-6 sm:top-6">
             <button
               type="button"
               onClick={() => setFiltersOpen(true)}
@@ -314,7 +451,7 @@ export default function Home() {
             </button>
           </div>
 
-          <div className="mt-4 flex flex-wrap items-center gap-3 text-xs text-[#3a2f2a]">
+          <div className="mt-4 flex flex-wrap items-center gap-2 text-[11px] text-[#3a2f2a] sm:gap-3 sm:text-xs">
             <span className="rounded-full border border-[#eadfce] bg-white px-3 py-1">
               Confidence scores shown
             </span>
@@ -327,8 +464,8 @@ export default function Home() {
           </div>
 
           {filtersOpen && (
-            <div className="absolute inset-0 z-20 flex items-start justify-center bg-black/30 px-4 py-8 lg:hidden">
-              <div className="relative w-full max-w-md rounded-3xl border border-[#eadfce] bg-[#fbf8f3] p-5 shadow-[0_20px_60px_-40px_rgba(20,17,15,0.5)]">
+            <div className="absolute inset-0 z-20 flex items-start justify-center bg-black/30 px-4 py-6 lg:hidden">
+              <div className="relative w-full max-w-md max-h-[85vh] overflow-y-auto rounded-3xl border border-[#eadfce] bg-[#fbf8f3] p-5 shadow-[0_20px_60px_-40px_rgba(20,17,15,0.5)]">
                 <div className="flex items-center justify-between">
                   <p className="text-xs uppercase tracking-[0.35em] text-[#a67047]">
                     Filters
@@ -445,8 +582,8 @@ export default function Home() {
       <div className="border-t border-[#eadfce] px-6 py-6 text-xs text-[#5a4a44]" />
 
       {signupOpen && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-8">
-          <div className="w-full max-w-lg rounded-3xl border border-[#eadfce] bg-[#fbf8f3] p-6 shadow-[0_30px_70px_-40px_rgba(20,17,15,0.6)]">
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6">
+          <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-3xl border border-[#eadfce] bg-[#fbf8f3] p-6 shadow-[0_30px_70px_-40px_rgba(20,17,15,0.6)]">
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-xs uppercase tracking-[0.35em] text-[#a67047]">
@@ -508,17 +645,23 @@ export default function Home() {
                   <input
                     type="tel"
                     value={vendorPhone ?? ""}
-                    onChange={(event) => setVendorPhone(event.target.value)}
+                    onChange={(event) =>
+                      setVendorPhone(event.target.value ?? "")
+                    }
                     placeholder="Phone number"
                     className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
                   />
                   <input
                     type="password"
+                    value={signupPassword}
+                    onChange={(event) => setSignupPassword(event.target.value)}
                     placeholder="Password"
                     className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
                   />
                   <input
                     type="password"
+                    value={signupConfirm}
+                    onChange={(event) => setSignupConfirm(event.target.value)}
                     placeholder="Confirm password"
                     className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
                   />
@@ -542,6 +685,9 @@ export default function Home() {
                   <input
                     type="file"
                     accept="application/pdf,image/*"
+                    onChange={(event) =>
+                      setCompanyRegFile(event.target.files?.[0] ?? null)
+                    }
                     className="w-full text-xs text-[#5a4a44] file:mr-3 file:rounded-full file:border-0 file:bg-[#c77d4b] file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white"
                   />
                   <input
@@ -554,17 +700,23 @@ export default function Home() {
                   <input
                     type="tel"
                     value={vendorPhone ?? ""}
-                    onChange={(event) => setVendorPhone(event.target.value)}
+                    onChange={(event) =>
+                      setVendorPhone(event.target.value ?? "")
+                    }
                     placeholder="Company phone"
                     className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
                   />
                   <input
                     type="password"
+                    value={signupPassword}
+                    onChange={(event) => setSignupPassword(event.target.value)}
                     placeholder="Password"
                     className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
                   />
                   <input
                     type="password"
+                    value={signupConfirm}
+                    onChange={(event) => setSignupConfirm(event.target.value)}
                     placeholder="Confirm password"
                     className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
                   />
@@ -572,23 +724,28 @@ export default function Home() {
               )}
             </div>
 
+            {authError && (
+              <div className="mt-4 rounded-2xl border border-[#eadfce] bg-white px-4 py-3 text-[11px] text-[#b3261e]">
+                {authError}
+              </div>
+            )}
+
             <div className="mt-5 flex items-center justify-end gap-2">
               <button
                 type="button"
                 onClick={() => setSignupOpen(false)}
                 className="rounded-full border border-[#eadfce] px-4 py-2 text-xs text-[#5a4a44]"
+                disabled={authLoading}
               >
                 Cancel
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setSignupOpen(false);
-                  router.push("/vendor");
-                }}
+                onClick={handleSignup}
                 className="rounded-full bg-[#1f3d2d] px-4 py-2 text-xs font-semibold text-white"
+                disabled={authLoading}
               >
-                Create account
+                {authLoading ? "Creating..." : "Create account"}
               </button>
             </div>
           </div>
@@ -596,8 +753,8 @@ export default function Home() {
       )}
 
       {loginOpen && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-8">
-          <div className="w-full max-w-sm rounded-3xl border border-[#eadfce] bg-[#fbf8f3] p-6 shadow-[0_30px_70px_-40px_rgba(20,17,15,0.6)]">
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6">
+          <div className="w-full max-w-sm max-h-[90vh] overflow-y-auto rounded-3xl border border-[#eadfce] bg-[#fbf8f3] p-6 shadow-[0_30px_70px_-40px_rgba(20,17,15,0.6)]">
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-xs uppercase tracking-[0.35em] text-[#a67047]">
@@ -619,33 +776,42 @@ export default function Home() {
             <div className="mt-5 space-y-3">
               <input
                 type="email"
+                value={loginEmail}
+                onChange={(event) => setLoginEmail(event.target.value)}
                 placeholder="Email"
                 className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
               />
               <input
                 type="password"
+                value={loginPassword}
+                onChange={(event) => setLoginPassword(event.target.value)}
                 placeholder="Password"
                 className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
               />
             </div>
+
+            {authError && (
+              <div className="mt-4 rounded-2xl border border-[#eadfce] bg-white px-4 py-3 text-[11px] text-[#b3261e]">
+                {authError}
+              </div>
+            )}
 
             <div className="mt-5 flex items-center justify-end gap-2">
               <button
                 type="button"
                 onClick={() => setLoginOpen(false)}
                 className="rounded-full border border-[#eadfce] px-4 py-2 text-xs text-[#5a4a44]"
+                disabled={authLoading}
               >
                 Cancel
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setLoginOpen(false);
-                  router.push("/vendor");
-                }}
+                onClick={handleLogin}
                 className="rounded-full bg-[#1f3d2d] px-4 py-2 text-xs font-semibold text-white"
+                disabled={authLoading}
               >
-                Login
+                {authLoading ? "Signing in..." : "Login"}
               </button>
             </div>
           </div>

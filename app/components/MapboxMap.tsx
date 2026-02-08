@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
+import { addDoc, collection, serverTimestamp } from "firebase/firestore";
+import { db } from "../../lib/firebase";
 
 export type Plot = {
   id: string;
@@ -38,6 +40,9 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
   const [inquiryMethod, setInquiryMethod] = useState<
     "Call" | "Text" | "WhatsApp"
   >("WhatsApp");
+  const [inquiryMessage, setInquiryMessage] = useState("");
+  const [inquirySaving, setInquirySaving] = useState(false);
+  const [inquiryError, setInquiryError] = useState<string | null>(null);
 
   const tourNodes = useMemo(() => {
     if (!activePlot) return [];
@@ -88,6 +93,37 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
     }),
     [visiblePlots]
   );
+
+  const submitInquiry = async () => {
+    if (!activePlot) return;
+    if (!inquiryName || !inquiryPhone) {
+      setInquiryError("Name and phone are required.");
+      return;
+    }
+    setInquirySaving(true);
+    setInquiryError(null);
+    try {
+      await addDoc(collection(db, "inquiries"), {
+        plotId: activePlot.id,
+        plotLabel: activePlot.label,
+        vendorName: activePlot.vendor,
+        vendorType: activePlot.vendorType,
+        buyerName: inquiryName,
+        buyerPhone: inquiryPhone,
+        preferredContact: inquiryMethod,
+        message: inquiryMessage,
+        createdAt: serverTimestamp(),
+      });
+      setInquiryOpen(false);
+      setInquiryName("");
+      setInquiryPhone("");
+      setInquiryMessage("");
+    } catch {
+      setInquiryError("Failed to send inquiry. Try again.");
+    } finally {
+      setInquirySaving(false);
+    }
+  };
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -280,7 +316,7 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
   }, [hasSatellite, isSatellite, mapTilerKey]);
 
   return (
-    <div className="relative h-[70vh] min-h-[520px] w-full overflow-hidden rounded-[32px] border border-[#eadfce] bg-[#e8dccb] shadow-[0_30px_70px_-45px_rgba(20,17,15,0.55)] md:h-[720px]">
+    <div className="relative h-[65vh] min-h-[420px] w-full overflow-hidden rounded-[24px] border border-[#eadfce] bg-[#e8dccb] shadow-[0_30px_70px_-45px_rgba(20,17,15,0.55)] sm:min-h-[520px] md:h-[720px] md:rounded-[32px]">
       <div className="absolute left-5 top-5 z-10 flex flex-wrap gap-2 rounded-full bg-white/90 px-3 py-2 text-xs font-semibold text-[#1f3d2d] shadow-sm backdrop-blur">
         <button
           type="button"
@@ -305,7 +341,7 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
       <div ref={containerRef} className="h-full w-full" />
 
       {activePlot && (
-        <div className="absolute right-6 top-6 z-20 w-[260px] rounded-3xl border border-[#eadfce] bg-white/95 p-4 text-xs shadow-[0_20px_60px_-40px_rgba(20,17,15,0.6)] backdrop-blur">
+        <div className="absolute right-4 top-4 z-20 w-[260px] max-w-[85vw] rounded-3xl border border-[#eadfce] bg-white/95 p-4 text-xs shadow-[0_20px_60px_-40px_rgba(20,17,15,0.6)] backdrop-blur sm:right-6 sm:top-6">
           <div className="flex items-start justify-between">
             <div>
               <p className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
@@ -375,9 +411,7 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
               className="mt-4 space-y-3 text-[11px]"
               onSubmit={(event) => {
                 event.preventDefault();
-                setInquiryName("");
-                setInquiryPhone("");
-                setInquiryOpen(false);
+                submitInquiry();
               }}
             >
               <div>
@@ -429,19 +463,38 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
                   ))}
                 </div>
               </div>
+              <div>
+                <label className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                  Message
+                </label>
+                <textarea
+                  value={inquiryMessage}
+                  onChange={(event) => setInquiryMessage(event.target.value)}
+                  rows={3}
+                  placeholder="Ask about access, pricing, docs, or timelines."
+                  className="mt-2 w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-xs text-[#14110f]"
+                />
+              </div>
+              {inquiryError && (
+                <div className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-[10px] text-[#b3261e]">
+                  {inquiryError}
+                </div>
+              )}
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setInquiryOpen(false)}
                   className="w-full rounded-full border border-[#eadfce] px-3 py-2 text-[11px] text-[#5a4a44]"
+                  disabled={inquirySaving}
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   className="w-full rounded-full bg-[#1f3d2d] px-3 py-2 text-[11px] font-semibold text-white"
+                  disabled={inquirySaving}
                 >
-                  Send inquiry
+                  {inquirySaving ? "Sending..." : "Send inquiry"}
                 </button>
               </div>
             </form>

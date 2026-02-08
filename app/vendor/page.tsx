@@ -1,6 +1,23 @@
 ﻿"use client";
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { onAuthStateChanged } from "firebase/auth";
+import {
+  addDoc,
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  orderBy,
+  query,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+  where,
+} from "firebase/firestore";
+import { auth, db, storage } from "../../lib/firebase";
+import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 
 type VendorPlot = {
   id: string;
@@ -67,26 +84,13 @@ type DraftListing = {
   amenities: string[];
 };
 
-const draftListings: DraftListing[] = [
-  {
-    id: "DR-102",
-    name: "Riverstone Parcel",
-    acres: "3.2 acres",
-    price: "$52k",
-    updated: "Edited 2 hours ago",
-    step: 2,
-    amenities: ["Access road", "Power", "Water"],
-  },
-  {
-    id: "DR-118",
-    name: "Sunset Ridge",
-    acres: "1.4 acres",
-    price: "$29k",
-    updated: "Edited yesterday",
-    step: 1,
-    amenities: ["Mobile coverage"],
-  },
-];
+type DraftNode = {
+  id: number;
+  label: string;
+  files: FileList | null;
+  coords?: { lat: number; lng: number };
+  imageUrl?: string;
+};
 
 type Inquiry = {
   id: string;
@@ -99,38 +103,7 @@ type Inquiry = {
   message: string;
 };
 
-const inquiries: Inquiry[] = [
-  {
-    id: "INQ-301",
-    buyer: "L. Achieng",
-    parcel: "Redwood Ridge",
-    intent: "High",
-    time: "24 min ago",
-    phone: "+254 712 345 678",
-    preferredContact: "WhatsApp",
-    message: "Is access road usable during rain? Looking to buy within 2 weeks.",
-  },
-  {
-    id: "INQ-318",
-    buyer: "K. Otieno",
-    parcel: "Mango Grove",
-    intent: "Medium",
-    time: "1 hour ago",
-    phone: "+254 723 551 202",
-    preferredContact: "Call",
-    message: "Can I schedule a site visit this weekend?",
-  },
-  {
-    id: "INQ-332",
-    buyer: "S. Mwangi",
-    parcel: "Koru Valley",
-    intent: "High",
-    time: "Today, 9:10 AM",
-    phone: "+254 701 889 410",
-    preferredContact: "Text",
-    message: "Is there power on site and what are the title details?",
-  },
-];
+const inquiriesSeed: Inquiry[] = [];
 
 type SoldListing = {
   id: string;
@@ -246,6 +219,10 @@ export default function VendorDashboard() {
     useState<SalesRecord[]>(initialSales);
   const [pendingSalesRecords, setPendingSalesRecords] =
     useState<SalesRecord[]>(initialPendingSales);
+  const [inquiries, setInquiries] = useState<Inquiry[]>(inquiriesSeed);
+  const [draftListings, setDraftListings] = useState<DraftListing[]>([]);
+  const [draftId, setDraftId] = useState<string | null>(null);
+  const [draftSaving, setDraftSaving] = useState(false);
   const [selectedPlotId, setSelectedPlotId] = useState<string | null>(null);
   const [selectedParcelIndex, setSelectedParcelIndex] = useState<number | null>(
     null
@@ -284,7 +261,7 @@ export default function VendorDashboard() {
   const [listingAmenities, setListingAmenities] = useState<string[]>([]);
   const [listingStep, setListingStep] = useState<1 | 2 | 3>(1);
   const [panoramaNodes, setPanoramaNodes] = useState<
-    { id: number; label: string; files: FileList | null }[]
+    DraftNode[]
   >([{ id: 1, label: "Node 1", files: null }]);
   const [subParcels, setSubParcels] = useState<
     {
@@ -309,8 +286,191 @@ export default function VendorDashboard() {
   const [locationStatus, setLocationStatus] = useState<string | null>(null);
   const watchIdRef = useRef<number | null>(null);
   const activeCaptureIdRef = useRef<number | null>(null);
+  const [vendorProfile, setVendorProfile] = useState<{
+    name: string;
+    type: "Individual" | "Company";
+    location?: string;
+  } | null>(null);
+  const [vendorId, setVendorId] = useState<string | null>(null);
 
   const selectedPlot = plots.find((plot) => plot.id === selectedPlotId) ?? null;
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      if (!user) {
+        setVendorProfile(null);
+        setVendorId(null);
+        return;
+      }
+      setVendorId(user.uid);
+      const snap = await getDoc(doc(db, "vendors", user.uid));
+      if (snap.exists()) {
+        const data = snap.data() as {
+          name?: string;
+          type?: "Individual" | "Company";
+        };
+        setVendorProfile({
+          name: data.name || "Vendor",
+          type: data.type || "Individual",
+          location: "Western District",
+        });
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const loadDrafts = async () => {
+      if (!vendorId) {
+        setDraftListings([]);
+        return;
+      }
+      await refreshDrafts(vendorId);
+    };
+    loadDrafts();
+  }, [vendorId]);
+
+  useEffect(() => {
+    const loadListings = async () => {
+      if (!vendorId) return;
+      const snapshot = await getDocs(
+        query(collection(db, "listings"), where("vendorId", "==", vendorId))
+      );
+      const mapped: VendorPlot[] = [];
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data() as {
+          name?: string;
+          acres?: string;
+          price?: string;
+          parcels?: { name?: string }[];
+        };
+        const totalParcels = data.parcels?.length ?? 1;
+        mapped.push({
+          id: docSnap.id,
+          name: data.name || "Untitled",
+          status: "Listed",
+          acres: data.acres || "",
+          price: data.price || "Ksh 0",
+          confidence: "—",
+          totalParcels,
+          soldParcelIds: [],
+          availableParcels: totalParcels,
+        });
+      });
+      setPlots(mapped.length ? mapped : initialPlots);
+    };
+    loadListings();
+  }, [vendorId]);
+
+  useEffect(() => {
+    const loadSales = async () => {
+      if (!vendorId) return;
+      const pendingSnap = await getDocs(
+        query(collection(db, "pendingSales"), where("vendorId", "==", vendorId))
+      );
+      const salesSnap = await getDocs(
+        query(collection(db, "sales"), where("vendorId", "==", vendorId))
+      );
+      const mapSale = (docSnap: any): SalesRecord => {
+        const data = docSnap.data() as SalesRecord & { createdAt?: any };
+        return {
+          ...data,
+          id: docSnap.id,
+        };
+      };
+      setPendingSalesRecords(pendingSnap.docs.map(mapSale));
+      setSalesRecords(salesSnap.docs.map(mapSale));
+    };
+    loadSales();
+  }, [vendorId]);
+
+  useEffect(() => {
+    const loadInquiries = async () => {
+      if (!vendorProfile?.name) return;
+      let snapshot;
+      try {
+        snapshot = await getDocs(
+          query(
+            collection(db, "inquiries"),
+            where("vendorName", "==", vendorProfile.name),
+            orderBy("createdAt", "desc")
+          )
+        );
+      } catch {
+        snapshot = await getDocs(
+          query(
+            collection(db, "inquiries"),
+            where("vendorName", "==", vendorProfile.name)
+          )
+        );
+      }
+      const items: Inquiry[] = [];
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data() as {
+          buyerName?: string;
+          buyerPhone?: string;
+          preferredContact?: "Call" | "Text" | "WhatsApp";
+          message?: string;
+          plotLabel?: string;
+          createdAt?: { toDate: () => Date };
+        };
+        const createdAt = data.createdAt?.toDate();
+        items.push({
+          id: docSnap.id,
+          buyer: data.buyerName || "Buyer",
+          parcel: data.plotLabel || "Parcel",
+          intent: "High",
+          time: createdAt ? createdAt.toLocaleString() : "Just now",
+          phone: data.buyerPhone || "",
+          preferredContact: data.preferredContact || "Call",
+          message: data.message || "",
+        });
+      });
+      setInquiries(items);
+    };
+    loadInquiries();
+  }, [vendorProfile?.name]);
+
+  const refreshDrafts = async (id: string) => {
+    let snapshot;
+    try {
+      snapshot = await getDocs(
+        query(
+          collection(db, "draftListings"),
+          where("vendorId", "==", id),
+          orderBy("updatedAt", "desc")
+        )
+      );
+    } catch {
+      snapshot = await getDocs(
+        query(collection(db, "draftListings"), where("vendorId", "==", id))
+      );
+    }
+    const drafts: DraftListing[] = [];
+    snapshot.forEach((docSnap) => {
+      const data = docSnap.data() as {
+        name?: string;
+        acres?: string;
+        price?: string;
+        step?: 1 | 2 | 3;
+        amenities?: string[];
+        updatedAt?: { toDate: () => Date };
+      };
+      const updatedAt = data.updatedAt?.toDate();
+      drafts.push({
+        id: docSnap.id,
+        name: data.name || "Untitled",
+        acres: data.acres || "",
+        price: data.price || "",
+        updated: updatedAt
+          ? `Edited ${updatedAt.toLocaleDateString()}`
+          : "Saved recently",
+        step: data.step || 1,
+        amenities: data.amenities || [],
+      });
+    });
+    setDraftListings(drafts);
+  };
 
   const earthRadius = 6371000;
   const toXY = (point: { lat: number; lng: number }, origin: { lat: number; lng: number }) => {
@@ -540,6 +700,13 @@ export default function VendorDashboard() {
           return sum + paid;
         }, 0);
         const remainingBalance = Math.max(sale.netToVendor - totalPaid, 0);
+        if (vendorId) {
+          updateDoc(doc(db, "pendingSales", sale.id), {
+            installments: nextInstallments,
+            totalPaid,
+            remainingBalance,
+          });
+        }
         return {
           ...sale,
           installments: nextInstallments,
@@ -551,6 +718,16 @@ export default function VendorDashboard() {
       const toMove = updated.filter((sale) => sale.remainingBalance <= 0);
       if (toMove.length > 0) {
         setSalesRecords((prev) => [...toMove, ...prev]);
+        if (vendorId) {
+          toMove.forEach(async (sale) => {
+            await setDoc(doc(db, "sales", sale.id), {
+              vendorId,
+              ...sale,
+              createdAt: serverTimestamp(),
+            });
+            await deleteDoc(doc(db, "pendingSales", sale.id));
+          });
+        }
       }
       return updated.filter((sale) => sale.remainingBalance > 0);
     });
@@ -648,26 +825,134 @@ export default function VendorDashboard() {
     };
     if (remainingBalance > 0) {
       setPendingSalesRecords((current) => [newRecord, ...current]);
+      if (vendorId) {
+        setDoc(doc(db, "pendingSales", newRecord.id), {
+          vendorId,
+          ...newRecord,
+          createdAt: serverTimestamp(),
+        });
+      }
     } else {
       setSalesRecords((current) => [newRecord, ...current]);
+      if (vendorId) {
+        setDoc(doc(db, "sales", newRecord.id), {
+          vendorId,
+          ...newRecord,
+          createdAt: serverTimestamp(),
+        });
+      }
     }
     markPlotSold(saleDraft.plotId, saleDraft.parcelIndex);
     setSaleModalOpen(false);
     setSaleDraft(null);
   };
 
+  const saveDraftStep = async (nextStep: 1 | 2 | 3) => {
+    if (!vendorId) return;
+    setDraftSaving(true);
+    try {
+      if (!draftId) {
+        const docRef = await addDoc(collection(db, "draftListings"), {
+          vendorId,
+          name: listingParcel,
+          acres: listingSize,
+          price: listingPrice,
+          amenities: listingAmenities,
+          step: nextStep,
+          nodes: panoramaNodes.map((node) => ({
+            label: node.label,
+            coords: node.coords ?? null,
+            imageUrl: node.imageUrl ?? "",
+          })),
+          updatedAt: serverTimestamp(),
+          createdAt: serverTimestamp(),
+        });
+        setDraftId(docRef.id);
+        await refreshDrafts(vendorId);
+      } else {
+        await updateDoc(doc(db, "draftListings", draftId), {
+          name: listingParcel,
+          acres: listingSize,
+          price: listingPrice,
+          amenities: listingAmenities,
+          step: nextStep,
+          nodes: panoramaNodes.map((node) => ({
+            label: node.label,
+            coords: node.coords ?? null,
+            imageUrl: node.imageUrl ?? "",
+          })),
+          updatedAt: serverTimestamp(),
+        });
+        await refreshDrafts(vendorId);
+      }
+    } finally {
+      setDraftSaving(false);
+    }
+  };
+
+  const finishListing = async () => {
+    if (!vendorId) return;
+    setDraftSaving(true);
+    try {
+      const listingPayload = {
+        vendorId,
+        vendorName: vendorProfile?.name ?? "Vendor",
+        vendorType: vendorProfile?.type ?? "Individual",
+        name: listingParcel,
+        acres: listingSize,
+        price: listingPrice,
+        amenities: listingAmenities,
+        nodes: panoramaNodes.map((node) => ({
+          label: node.label,
+          coords: node.coords ?? null,
+          imageUrl: node.imageUrl ?? "",
+        })),
+        parcels: subParcels.map((parcel) => ({
+          name: parcel.name,
+          rawPath: parcel.rawPath,
+          cleanPath: parcel.cleanPath,
+        })),
+        createdAt: serverTimestamp(),
+      };
+      const docRef = await addDoc(collection(db, "listings"), listingPayload);
+      const totalParcels = subParcels.length || 1;
+      setPlots((current) => [
+        {
+          id: docRef.id,
+          name: listingParcel || "Untitled",
+          status: "Listed",
+          acres: listingSize,
+          price: listingPrice || "Ksh 0",
+          confidence: "—",
+          totalParcels,
+          soldParcelIds: [],
+          availableParcels: totalParcels,
+        },
+        ...current,
+      ]);
+      if (draftId) {
+        await deleteDoc(doc(db, "draftListings", draftId));
+        setDraftId(null);
+      }
+      await refreshDrafts(vendorId);
+      setNewListingOpen(false);
+    } finally {
+      setDraftSaving(false);
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_#f9f1e6,_#f2ede4_55%,_#efe7d8)] text-[#14110f]">
-      <header className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-        <div>
+    <div className="min-h-screen overflow-x-hidden bg-[radial-gradient(circle_at_top,_#f9f1e6,_#f2ede4_55%,_#efe7d8)] text-[#14110f]">
+      <header className="mx-auto flex max-w-6xl flex-col gap-4 px-4 py-4 sm:px-6 md:flex-row md:items-center md:justify-between">
+        <div className="text-left">
           <p className="text-xs uppercase tracking-[0.35em] text-[#c77d4b]">
             Vendor workspace
           </p>
-          <h1 className="mt-2 font-serif text-3xl text-[#14110f]">
-            Welcome back, Amina.
+          <h1 className="mt-2 font-serif text-2xl text-[#14110f] sm:text-3xl">
+            Welcome back, {vendorProfile?.name ?? "Amina"}.
           </h1>
         </div>
-        <div className="flex items-center gap-3 text-sm font-medium">
+        <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
           <button className="rounded-full border border-[#1f3d2d]/30 px-4 py-2 text-[#1f3d2d] transition hover:border-[#1f3d2d]">
             Export leads
           </button>
@@ -689,19 +974,24 @@ export default function VendorDashboard() {
         </div>
       </header>
 
-      <main className="mx-auto grid max-w-6xl gap-6 px-6 pb-16 lg:grid-cols-[260px_minmax(0,1fr)]">
+      <main className="mx-auto grid max-w-6xl gap-6 px-4 pb-24 sm:px-6 lg:grid-cols-[260px_minmax(0,1fr)]">
         <aside className="space-y-6">
           <section className="rounded-3xl bg-[#fbf8f3] p-5 shadow-[0_20px_60px_-40px_rgba(20,17,15,0.5)]">
             <div className="flex items-center gap-3">
               <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#1f3d2d] text-lg font-semibold text-[#f4f1ea]">
-                AD
+                {(vendorProfile?.name ?? "AD")
+                  .split(" ")
+                  .slice(0, 2)
+                  .map((part) => part[0]?.toUpperCase())
+                  .join("")}
               </div>
               <div>
                 <p className="text-sm font-semibold text-[#14110f]">
-                  Amina Diallo
+                  {vendorProfile?.name ?? "Amina Diallo"}
                 </p>
                 <p className="text-xs text-[#5a4a44]">
-                  Vendor · Western District
+                  {vendorProfile?.type ?? "Vendor"} ·{" "}
+                  {vendorProfile?.location ?? "Western District"}
                 </p>
               </div>
             </div>
@@ -1002,12 +1292,38 @@ export default function VendorDashboard() {
                   <button
                     key={draft.id}
                     type="button"
-                    onClick={() => {
+                    onClick={async () => {
                       setListingParcel(draft.name);
                       setListingSize(draft.acres);
                       setListingPrice(draft.price);
                       setListingAmenities(draft.amenities);
                       setListingStep(draft.step);
+                      setDraftId(draft.id);
+                      if (vendorId) {
+                        const snap = await getDoc(
+                          doc(db, "draftListings", draft.id)
+                        );
+                        if (snap.exists()) {
+                        const data = snap.data() as {
+                          nodes?: {
+                            label: string;
+                            coords?: { lat: number; lng: number };
+                            imageUrl?: string;
+                          }[];
+                        };
+                        if (data.nodes?.length) {
+                          setPanoramaNodes(
+                            data.nodes.map((node, idx) => ({
+                              id: Date.now() + idx,
+                              label: node.label || `Node ${idx + 1}`,
+                              files: null,
+                              coords: node.coords ?? undefined,
+                              imageUrl: node.imageUrl ?? "",
+                            }))
+                          );
+                        }
+                        }
+                      }
                       setNewListingOpen(true);
                     }}
                     className="flex w-full flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-4 py-3 text-left transition hover:border-[#c9b8a6]"
@@ -1432,8 +1748,8 @@ export default function VendorDashboard() {
       </nav>
 
       {saleModalOpen && saleDraft && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-8">
-          <div className="w-full max-w-lg rounded-3xl border border-[#eadfce] bg-[#fbf8f3] p-6 shadow-[0_30px_70px_-40px_rgba(20,17,15,0.6)]">
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6">
+          <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-3xl border border-[#eadfce] bg-[#fbf8f3] p-6 shadow-[0_30px_70px_-40px_rgba(20,17,15,0.6)]">
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-xs uppercase tracking-[0.35em] text-[#a67047]">
@@ -1762,8 +2078,8 @@ export default function VendorDashboard() {
       )}
 
       {newListingOpen && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-8">
-          <div className="w-full max-w-2xl rounded-3xl border border-[#eadfce] bg-[#fbf8f3] p-6 shadow-[0_30px_70px_-40px_rgba(20,17,15,0.6)]">
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6">
+          <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-3xl border border-[#eadfce] bg-[#fbf8f3] p-6 shadow-[0_30px_70px_-40px_rgba(20,17,15,0.6)]">
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-xs uppercase tracking-[0.35em] text-[#a67047]">
@@ -1960,6 +2276,7 @@ export default function VendorDashboard() {
                         <input
                           type="file"
                           accept="image/*"
+                          capture="environment"
                           onChange={(event) => {
                             const files = event.target.files;
                             setPanoramaNodes((current) =>
@@ -1969,6 +2286,49 @@ export default function VendorDashboard() {
                                   : item
                               )
                             );
+                            const file = files?.[0];
+                            if (file && vendorId) {
+                              const fileRef = ref(
+                                storage,
+                                `vendors/${vendorId}/nodes/${node.id}-${file.name}`
+                              );
+                              uploadBytes(fileRef, file).then(() =>
+                                getDownloadURL(fileRef).then((url) => {
+                                  setPanoramaNodes((current) =>
+                                    current.map((item) =>
+                                      item.id === node.id
+                                        ? { ...item, imageUrl: url }
+                                        : item
+                                    )
+                                  );
+                                })
+                              );
+                            }
+                            if (navigator.geolocation) {
+                              navigator.geolocation.getCurrentPosition(
+                                (pos) => {
+                                  setPanoramaNodes((current) =>
+                                    current.map((item) =>
+                                      item.id === node.id
+                                        ? {
+                                            ...item,
+                                            coords: {
+                                              lat: pos.coords.latitude,
+                                          lng: pos.coords.longitude,
+                                        },
+                                      }
+                                    : item
+                                )
+                              );
+                            },
+                                () => {
+                                  setLocationStatus(
+                                    "Unable to capture node location."
+                                  );
+                                },
+                                { enableHighAccuracy: true, timeout: 10000 }
+                              );
+                            }
                           }}
                           className="w-full text-xs text-[#5a4a44] file:mr-3 file:rounded-full file:border-0 file:bg-[#c77d4b] file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white"
                         />
@@ -1976,6 +2336,11 @@ export default function VendorDashboard() {
                       {node.files?.length ? (
                         <p className="mt-2 text-[10px] text-[#6b3e1e]">
                           {node.files.length} file(s) selected
+                          {node.coords
+                            ? ` · ${node.coords.lat.toFixed(
+                                5
+                              )}, ${node.coords.lng.toFixed(5)}`
+                            : ""}
                         </p>
                       ) : null}
                     </div>
@@ -1991,6 +2356,7 @@ export default function VendorDashboard() {
                           id: Date.now(),
                           label: `Node ${current.length + 1}`,
                           files: null,
+                          coords: undefined,
                         },
                       ])
                     }
@@ -2254,28 +2620,30 @@ export default function VendorDashboard() {
                 {listingStep < 3 ? (
                   <>
                     <span>Saved as draft. You can finish later.</span>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        setListingStep((step) =>
-                          step === 1 ? 2 : (step + 1) as 1 | 2 | 3
-                        )
-                      }
-                      className="rounded-full bg-[#c77d4b] px-4 py-2 text-xs font-semibold text-white"
-                    >
-                      Next
-                    </button>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const nextStep = (listingStep === 1 ? 2 : 3) as 1 | 2 | 3;
+                      await saveDraftStep(nextStep);
+                      setListingStep(nextStep);
+                    }}
+                    className="rounded-full bg-[#c77d4b] px-4 py-2 text-xs font-semibold text-white"
+                    disabled={draftSaving}
+                  >
+                    {draftSaving ? "Saving..." : "Next"}
+                  </button>
                   </>
                 ) : (
                   <>
                     <span>Saved as draft. You can submit later.</span>
-                    <button
-                      type="button"
-                      onClick={() => setNewListingOpen(false)}
-                      className="rounded-full bg-[#c77d4b] px-4 py-2 text-xs font-semibold text-white"
-                    >
-                      Finish
-                    </button>
+                  <button
+                    type="button"
+                    onClick={finishListing}
+                    className="rounded-full bg-[#c77d4b] px-4 py-2 text-xs font-semibold text-white"
+                    disabled={draftSaving}
+                  >
+                    {draftSaving ? "Saving..." : "Finish"}
+                  </button>
                   </>
                 )}
               </div>
