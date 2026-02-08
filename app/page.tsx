@@ -11,84 +11,7 @@ import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 export default function Home() {
   const router = useRouter();
   const [remotePlots, setRemotePlots] = useState<Plot[]>([]);
-  const plots: Plot[] = [
-    {
-      id: "PT-204",
-      label: "Redwood Ridge",
-      size: "2.6 acres",
-      price: "Ksh 4.8M",
-      center: [36.6629, -1.2461],
-      startPoint: [36.6606, -1.2435],
-      polygon: [
-        [36.6592, -1.2448],
-        [36.6661, -1.2445],
-        [36.6674, -1.2485],
-        [36.6611, -1.2499],
-        [36.6592, -1.2448],
-      ],
-      vendor: "Diallo Holdings",
-      vendorType: "Company",
-      amenities: ["Access road", "Water", "Power"],
-      totalParcels: 5,
-      availableParcels: 3,
-    },
-    {
-      id: "PT-311",
-      label: "Blue River Bend",
-      size: "1.2 acres",
-      price: "Ksh 2.6M",
-      center: [36.6781, -1.2412],
-      startPoint: [36.6761, -1.2381],
-      polygon: [
-        [36.6743, -1.2394],
-        [36.6814, -1.2387],
-        [36.6826, -1.2426],
-        [36.6775, -1.2442],
-        [36.6743, -1.2394],
-      ],
-      vendor: "Amina Diallo",
-      vendorType: "Individual",
-      amenities: ["River access"],
-    },
-    {
-      id: "PT-517",
-      label: "Koru Valley",
-      size: "5.1 acres",
-      price: "Ksh 7.1M",
-      center: [36.6504, -1.2596],
-      startPoint: [36.6482, -1.2562],
-      polygon: [
-        [36.6469, -1.2575],
-        [36.6538, -1.2576],
-        [36.6541, -1.2617],
-        [36.6487, -1.2624],
-        [36.6469, -1.2575],
-      ],
-      vendor: "Koru Estates Ltd",
-      vendorType: "Company",
-      amenities: ["Access road", "Power", "Mobile coverage"],
-      totalParcels: 8,
-      availableParcels: 6,
-    },
-    {
-      id: "PT-622",
-      label: "Mango Grove",
-      size: "0.9 acres",
-      price: "Ksh 1.9M",
-      center: [36.6694, -1.2624],
-      startPoint: [36.6674, -1.2601],
-      polygon: [
-        [36.6661, -1.2607],
-        [36.6715, -1.2602],
-        [36.6722, -1.2635],
-        [36.6682, -1.2647],
-        [36.6661, -1.2607],
-      ],
-      vendor: "J. Mensah",
-      vendorType: "Individual",
-      amenities: ["Well water"],
-    },
-  ];
+  const plots: Plot[] = [];
 
   useEffect(() => {
     const loadListings = async () => {
@@ -102,40 +25,61 @@ export default function Home() {
           amenities?: string[];
           vendorName?: string;
           vendorType?: "Company" | "Individual";
-          parcels?: { cleanPath?: { lat: number; lng: number }[] }[];
+          parcels?: { name?: string; cleanPath?: { lat: number; lng: number }[] }[];
         };
-        const cleanPath = data.parcels?.[0]?.cleanPath ?? [];
-        if (cleanPath.length < 3) return;
-        const polygon = cleanPath.map((point) => [point.lng, point.lat]) as [
-          number,
-          number
-        ][];
-        const center = polygon.reduce(
-          (acc, point) => [acc[0] + point[0], acc[1] + point[1]],
-          [0, 0]
-        );
-        const centerLngLat: [number, number] = [
-          center[0] / polygon.length,
-          center[1] / polygon.length,
-        ];
+        const parcels = data.parcels ?? [];
         const priceLabel =
           data.price && data.price.toLowerCase().includes("ksh")
             ? data.price
             : data.price
             ? `Ksh ${data.price}`
             : "Ksh 0";
-        mapped.push({
-          id: docSnap.id,
-          label: data.name || "Untitled",
-          size: data.acres || "",
-          price: priceLabel,
-          center: centerLngLat,
-          startPoint: polygon[0],
-          polygon,
-          vendor: data.vendorName || "Vendor",
-          vendorType: data.vendorType || "Individual",
-          amenities: data.amenities || [],
-        });
+        const totalParcels = parcels.length || 1;
+
+        const addPlotFromPath = (
+          cleanPath: { lat: number; lng: number }[],
+          idx: number,
+          parcelName?: string
+        ) => {
+          if (cleanPath.length < 3) return;
+          const polygon = cleanPath.map((point) => [point.lng, point.lat]) as [
+            number,
+            number
+          ][];
+          const center = polygon.reduce(
+            (acc, point) => [acc[0] + point[0], acc[1] + point[1]],
+            [0, 0]
+          );
+          const centerLngLat: [number, number] = [
+            center[0] / polygon.length,
+            center[1] / polygon.length,
+          ];
+          mapped.push({
+            id: `${docSnap.id}-${idx}`,
+            label:
+              parcelName ||
+              (data.name ? `${data.name} · Parcel ${idx + 1}` : `Parcel ${idx + 1}`),
+            size: data.acres || "",
+            price: priceLabel,
+            center: centerLngLat,
+            startPoint: polygon[0],
+            polygon,
+            vendor: data.vendorName || "Vendor",
+            vendorType: data.vendorType || "Individual",
+            amenities: data.amenities || [],
+            totalParcels,
+            availableParcels: totalParcels,
+          });
+        };
+
+        if (parcels.length) {
+          parcels.forEach((parcel, idx) =>
+            addPlotFromPath(parcel.cleanPath ?? [], idx, parcel.name)
+          );
+          return;
+        }
+
+        addPlotFromPath([], 0);
       });
       setRemotePlots(mapped);
     };

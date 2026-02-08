@@ -1,7 +1,9 @@
 ﻿"use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { onAuthStateChanged } from "firebase/auth";
+import maplibregl from "maplibre-gl";
+import "maplibre-gl/dist/maplibre-gl.css";
 import {
   addDoc,
   collection,
@@ -31,48 +33,7 @@ type VendorPlot = {
   availableParcels?: number;
 };
 
-const initialPlots: VendorPlot[] = [
-  {
-    id: "PT-204",
-    name: "Redwood Ridge",
-    status: "Listed",
-    acres: "2.6 acres",
-    price: "$48k",
-    confidence: "93%",
-    totalParcels: 5,
-    soldParcelIds: [1, 3],
-  },
-  {
-    id: "PT-311",
-    name: "Blue River Bend",
-    status: "Awaiting review",
-    acres: "1.2 acres",
-    price: "$26k",
-    confidence: "86%",
-    totalParcels: 1,
-    soldParcelIds: [],
-  },
-  {
-    id: "PT-517",
-    name: "Koru Valley",
-    status: "Needs recapture",
-    acres: "5.1 acres",
-    price: "$71k",
-    confidence: "72%",
-    totalParcels: 3,
-    soldParcelIds: [2],
-  },
-  {
-    id: "PT-642",
-    name: "Mango Grove",
-    status: "Awaiting review",
-    acres: "1.8 acres",
-    price: "$34k",
-    confidence: "89%",
-    totalParcels: 1,
-    soldParcelIds: [],
-  },
-];
+const initialPlots: VendorPlot[] = [];
 
 type DraftListing = {
   id: string;
@@ -115,22 +76,7 @@ type SoldListing = {
   soldParcels?: number;
 };
 
-const initialSoldListings: SoldListing[] = [
-  {
-    id: "SLD-204",
-    name: "Cedar Flats",
-    acres: "2.1 acres",
-    price: "$45k",
-    soldOn: "Sold Feb 2, 2026",
-  },
-  {
-    id: "SLD-233",
-    name: "Olive Ridge",
-    acres: "1.6 acres",
-    price: "$33k",
-    soldOn: "Sold Jan 18, 2026",
-  },
-];
+const initialSoldListings: SoldListing[] = [];
 
 type SaleInstallment = {
   id: number;
@@ -138,6 +84,7 @@ type SaleInstallment = {
   date: string;
   method: "Cash" | "Bank transfer" | "Mobile money";
   proofName?: string;
+  proofUrl?: string;
 };
 
 type SalesRecord = {
@@ -155,61 +102,15 @@ type SalesRecord = {
   agreementFile: string;
 };
 
-const initialPendingSales: SalesRecord[] = [
-  {
-    id: "SALE-1021",
-    parcelName: "Cedar Flats",
-    parcelId: "SLD-204",
-    buyer: "K. Kamau",
-    salePrice: 45000,
-    processingFee: 1200,
-    netToVendor: 43800,
-    totalPaid: 20000,
-    remainingBalance: 23800,
-    installments: [
-      {
-        id: 1,
-        amount: "20000",
-        date: "2026-02-02",
-        method: "Mobile money",
-        proofName: "mpesa-receipt.pdf",
-      },
-    ],
-    soldOn: "Feb 2, 2026",
-    agreementFile: "",
-  },
-];
+const initialPendingSales: SalesRecord[] = [];
 
-const initialSales: SalesRecord[] = [
-  {
-    id: "SALE-1044",
-    parcelName: "Olive Ridge",
-    parcelId: "SLD-233",
-    buyer: "N. Wanjiru",
-    salePrice: 33000,
-    processingFee: 900,
-    netToVendor: 32100,
-    totalPaid: 32100,
-    remainingBalance: 0,
-    installments: [
-      {
-        id: 1,
-        amount: "32100",
-        date: "2026-01-18",
-        method: "Bank transfer",
-        proofName: "bank-slip.pdf",
-      },
-    ],
-    soldOn: "Jan 18, 2026",
-    agreementFile: "",
-  },
-];
+const initialSales: SalesRecord[] = [];
 
 
 export default function VendorDashboard() {
   const [newListingOpen, setNewListingOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<
-    "active" | "drafts" | "inquiries" | "sold" | "pending" | "sales"
+    "active" | "drafts" | "inquiries" | "pending" | "sales"
   >("active");
   const [plots, setPlots] = useState<VendorPlot[]>(initialPlots);
   const [soldListings, setSoldListings] = useState<SoldListing[]>(
@@ -230,7 +131,22 @@ export default function VendorDashboard() {
   const [selectedInquiryId, setSelectedInquiryId] = useState<string | null>(
     null
   );
+  const [installmentDrafts, setInstallmentDrafts] = useState<
+    Record<
+      string,
+      {
+        amount: string;
+        date: string;
+        method: "Cash" | "Bank transfer" | "Mobile money";
+        proofFile: File | null;
+        saving?: boolean;
+      }
+    >
+  >({});
   const [expandedPendingId, setExpandedPendingId] = useState<string | null>(
+    null
+  );
+  const [installmentsOpenId, setInstallmentsOpenId] = useState<string | null>(
     null
   );
   const [saleModalOpen, setSaleModalOpen] = useState(false);
@@ -242,27 +158,32 @@ export default function VendorDashboard() {
   } | null>(null);
   const [buyerNameInput, setBuyerNameInput] = useState("");
   const [salePriceInput, setSalePriceInput] = useState("");
+  const [saleType, setSaleType] = useState<"cash" | "installments">("cash");
   const [charges, setCharges] = useState<
     { id: number; label: string; amount: string; kind: "charge" | "expense" }[]
   >([{ id: 1, label: "Processing fee", amount: "0", kind: "charge" }]);
-  const [installments, setInstallments] = useState<SaleInstallment[]>([
-    {
-      id: 1,
-      amount: "",
-      date: "",
-      method: "Mobile money",
-      proofName: "",
-    },
-  ]);
+  const [installments, setInstallments] = useState<SaleInstallment[]>([]);
   const [vendorLogo, setVendorLogo] = useState<string | null>(null);
   const [listingParcel, setListingParcel] = useState("");
   const [listingSize, setListingSize] = useState("");
   const [listingPrice, setListingPrice] = useState("");
+  const [listingStepError, setListingStepError] = useState<string | null>(null);
   const [listingAmenities, setListingAmenities] = useState<string[]>([]);
   const [listingStep, setListingStep] = useState<1 | 2 | 3>(1);
   const [panoramaNodes, setPanoramaNodes] = useState<
     DraftNode[]
   >([{ id: 1, label: "Node 1", files: null }]);
+  const [streetPreviewOpen, setStreetPreviewOpen] = useState(false);
+  const [streetPreviewIndex, setStreetPreviewIndex] = useState(0);
+  const [streetPreviewPrevIndex, setStreetPreviewPrevIndex] = useState<
+    number | null
+  >(null);
+  const [streetPreviewAnimating, setStreetPreviewAnimating] = useState(false);
+  const [streetPreviewError, setStreetPreviewError] = useState<string | null>(
+    null
+  );
+  const [streetPanValue, setStreetPanValue] = useState(50);
+  const lastPreviewTapRef = useRef(0);
   const [subParcels, setSubParcels] = useState<
     {
       id: number;
@@ -271,6 +192,9 @@ export default function VendorDashboard() {
       previewOpen: boolean;
       rawPath: { lat: number; lng: number }[];
       cleanPath: { lat: number; lng: number }[];
+      gpsAccuracy?: number;
+      waitingForFix?: boolean;
+      hasGoodFix?: boolean;
     }[]
   >([
     {
@@ -280,10 +204,21 @@ export default function VendorDashboard() {
       previewOpen: false,
       rawPath: [],
       cleanPath: [],
+      gpsAccuracy: undefined,
+      waitingForFix: false,
+      hasGoodFix: false,
     },
   ]);
-  const [startPoint, setStartPoint] = useState<string | null>(null);
   const [locationStatus, setLocationStatus] = useState<string | null>(null);
+  const [mapPreviewOpen, setMapPreviewOpen] = useState(false);
+  const mapPreviewRef = useRef<HTMLDivElement | null>(null);
+  const mapPreviewInstanceRef = useRef<maplibregl.Map | null>(null);
+  const mapPreviewDragRef = useRef<{
+    parcelId: number | null;
+    lastLngLat: { lng: number; lat: number } | null;
+  }>({ parcelId: null, lastLngLat: null });
+  const headingRef = useRef<number | null>(null);
+  const lastGpsTimestampRef = useRef<Record<number, number>>({});
   const watchIdRef = useRef<number | null>(null);
   const activeCaptureIdRef = useRef<number | null>(null);
   const [vendorProfile, setVendorProfile] = useState<{
@@ -292,6 +227,12 @@ export default function VendorDashboard() {
     location?: string;
   } | null>(null);
   const [vendorId, setVendorId] = useState<string | null>(null);
+  const mapTilerKey = process.env.NEXT_PUBLIC_MAPTILER_KEY;
+  const mapPreviewStyleUrl = mapTilerKey
+    ? `https://api.maptiler.com/maps/streets-v2/style.json?key=${mapTilerKey}`
+    : "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
+
+  const getActiveVendorId = () => vendorId ?? auth.currentUser?.uid ?? null;
 
   const selectedPlot = plots.find((plot) => plot.id === selectedPlotId) ?? null;
 
@@ -331,6 +272,23 @@ export default function VendorDashboard() {
   }, [vendorId]);
 
   useEffect(() => {
+    if (!window.DeviceOrientationEvent) return;
+    const handler = (event: DeviceOrientationEvent) => {
+      const heading =
+        typeof (event as any).webkitCompassHeading === "number"
+          ? (event as any).webkitCompassHeading
+          : typeof event.alpha === "number"
+          ? event.alpha
+          : null;
+      if (heading !== null) {
+        headingRef.current = heading;
+      }
+    };
+    window.addEventListener("deviceorientation", handler, true);
+    return () => window.removeEventListener("deviceorientation", handler, true);
+  }, []);
+
+  useEffect(() => {
     const loadListings = async () => {
       if (!vendorId) return;
       const snapshot = await getDocs(
@@ -357,7 +315,7 @@ export default function VendorDashboard() {
           availableParcels: totalParcels,
         });
       });
-      setPlots(mapped.length ? mapped : initialPlots);
+      setPlots(mapped);
     };
     loadListings();
   }, [vendorId]);
@@ -473,6 +431,8 @@ export default function VendorDashboard() {
   };
 
   const earthRadius = 6371000;
+  const minGpsAccuracyMeters = 3;
+  const maxFusionAccuracyMeters = 10;
   const toXY = (point: { lat: number; lng: number }, origin: { lat: number; lng: number }) => {
     const dLat = ((point.lat - origin.lat) * Math.PI) / 180;
     const dLng = ((point.lng - origin.lng) * Math.PI) / 180;
@@ -551,6 +511,53 @@ export default function VendorDashboard() {
     return [points[0], points.at(-1)!];
   };
 
+  const closeLoop = (points: { lat: number; lng: number }[]) => {
+    if (points.length < 2) return points;
+    const first = points[0];
+    const last = points.at(-1)!;
+    const gap = distance(first, last);
+    if (gap < 2) return points;
+    return [...points, first];
+  };
+
+  const smoothPoint = (
+    prev: { lat: number; lng: number } | null,
+    next: { lat: number; lng: number },
+    accuracy: number
+  ) => {
+    if (!prev) return next;
+    const weight = Math.min(0.85, Math.max(0.25, 1 - accuracy / 12));
+    return {
+      lat: prev.lat + (next.lat - prev.lat) * weight,
+      lng: prev.lng + (next.lng - prev.lng) * weight,
+    };
+  };
+
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const toDeg = (rad: number) => (rad * 180) / Math.PI;
+
+  const movePoint = (
+    origin: { lat: number; lng: number },
+    distanceMeters: number,
+    bearingDeg: number
+  ) => {
+    const bearing = toRad(bearingDeg);
+    const lat1 = toRad(origin.lat);
+    const lng1 = toRad(origin.lng);
+    const angDist = distanceMeters / earthRadius;
+    const lat2 = Math.asin(
+      Math.sin(lat1) * Math.cos(angDist) +
+        Math.cos(lat1) * Math.sin(angDist) * Math.cos(bearing)
+    );
+    const lng2 =
+      lng1 +
+      Math.atan2(
+        Math.sin(bearing) * Math.sin(angDist) * Math.cos(lat1),
+        Math.cos(angDist) - Math.sin(lat1) * Math.sin(lat2)
+      );
+    return { lat: toDeg(lat2), lng: toDeg(lng2) };
+  };
+
   const pathLength = (points: { lat: number; lng: number }[]) =>
     points.reduce((sum, point, idx) => {
       if (idx === 0) return sum;
@@ -587,6 +594,201 @@ export default function VendorDashboard() {
       .join(" ");
   };
 
+  const previewNodes = panoramaNodes.filter((node) => node.imageUrl);
+
+  useEffect(() => {
+    if (streetPreviewPrevIndex === null) return;
+    const timer = setTimeout(() => {
+      setStreetPreviewPrevIndex(null);
+      setStreetPreviewAnimating(false);
+    }, 350);
+    return () => clearTimeout(timer);
+  }, [streetPreviewPrevIndex, streetPreviewIndex]);
+
+  useEffect(() => {
+    if (!previewNodes.length) {
+      setStreetPreviewOpen(false);
+      setStreetPreviewIndex(0);
+      setStreetPreviewPrevIndex(null);
+      setStreetPreviewAnimating(false);
+      return;
+    }
+    if (streetPreviewIndex >= previewNodes.length) {
+      setStreetPreviewIndex(previewNodes.length - 1);
+    }
+  }, [previewNodes.length, streetPreviewIndex]);
+
+  const openStreetPreview = () => {
+    if (!previewNodes.length) {
+      setStreetPreviewError("Add at least one node photo to preview.");
+      return;
+    }
+    setStreetPreviewError(null);
+    setStreetPreviewIndex(0);
+    setStreetPreviewPrevIndex(null);
+    setStreetPreviewAnimating(false);
+    setStreetPanValue(50);
+    setStreetPreviewOpen(true);
+  };
+
+  const goToPreviewIndex = (index: number) => {
+    if (!previewNodes.length) return;
+    const bounded = Math.max(0, Math.min(index, previewNodes.length - 1));
+    if (bounded === streetPreviewIndex) return;
+    setStreetPreviewPrevIndex(streetPreviewIndex);
+    setStreetPreviewIndex(bounded);
+    setStreetPreviewAnimating(true);
+  };
+
+  const mapPreviewParcels = useMemo(
+    () =>
+      subParcels
+        .filter((parcel) => parcel.cleanPath.length >= 3)
+        .map((parcel) => ({
+          id: parcel.id,
+          name: parcel.name,
+          polygon: closeLoop(parcel.cleanPath).map((point) => [
+            point.lng,
+            point.lat,
+          ]) as [number, number][],
+        })),
+    [subParcels]
+  );
+
+  useEffect(() => {
+    if (!mapPreviewOpen) return;
+    if (!mapPreviewRef.current) return;
+
+    if (!mapPreviewInstanceRef.current) {
+      const map = new maplibregl.Map({
+        container: mapPreviewRef.current,
+        style: mapPreviewStyleUrl,
+        center: [36.668, -1.248],
+        zoom: 14,
+      });
+      map.addControl(new maplibregl.NavigationControl(), "bottom-right");
+      mapPreviewInstanceRef.current = map;
+
+      map.on("load", () => {
+        map.addSource("parcel-preview", {
+          type: "geojson",
+          data: {
+            type: "FeatureCollection",
+            features: [],
+          },
+        });
+        map.addLayer({
+          id: "parcel-preview-fill",
+          type: "fill",
+          source: "parcel-preview",
+          paint: {
+            "fill-color": "#c77d4b",
+            "fill-opacity": 0.3,
+          },
+        });
+        map.addLayer({
+          id: "parcel-preview-line",
+          type: "line",
+          source: "parcel-preview",
+          paint: {
+            "line-color": "#1f3d2d",
+            "line-width": 2,
+          },
+        });
+      });
+
+      map.on("mousedown", "parcel-preview-fill", (event) => {
+        const feature = event.features?.[0];
+        const id = feature?.properties?.id as number | undefined;
+        if (!id) return;
+        map.getCanvas().style.cursor = "grabbing";
+        mapPreviewDragRef.current = {
+          parcelId: id,
+          lastLngLat: event.lngLat,
+        };
+      });
+
+      map.on("mousemove", (event) => {
+        const dragState = mapPreviewDragRef.current;
+        if (!dragState.parcelId || !dragState.lastLngLat) return;
+        const deltaLng = event.lngLat.lng - dragState.lastLngLat.lng;
+        const deltaLat = event.lngLat.lat - dragState.lastLngLat.lat;
+        dragState.lastLngLat = event.lngLat;
+
+        setSubParcels((current) =>
+          current.map((parcel) => {
+            if (parcel.id !== dragState.parcelId) return parcel;
+            const translate = (points: { lat: number; lng: number }[]) =>
+              points.map((point) => ({
+                lat: point.lat + deltaLat,
+                lng: point.lng + deltaLng,
+              }));
+            return {
+              ...parcel,
+              rawPath: translate(parcel.rawPath),
+              cleanPath: translate(parcel.cleanPath),
+            };
+          })
+        );
+      });
+
+      const stopDrag = () => {
+        if (mapPreviewInstanceRef.current) {
+          mapPreviewInstanceRef.current.getCanvas().style.cursor = "";
+        }
+        mapPreviewDragRef.current = { parcelId: null, lastLngLat: null };
+      };
+
+      map.on("mouseup", stopDrag);
+      map.on("mouseleave", stopDrag);
+    }
+  }, [mapPreviewOpen]);
+
+  useEffect(() => {
+    if (mapPreviewOpen) return;
+    if (mapPreviewInstanceRef.current) {
+      mapPreviewInstanceRef.current.remove();
+      mapPreviewInstanceRef.current = null;
+    }
+  }, [mapPreviewOpen]);
+
+  useEffect(() => {
+    const map = mapPreviewInstanceRef.current;
+    if (!map) return;
+    const source = map.getSource("parcel-preview") as maplibregl.GeoJSONSource;
+    if (!source) return;
+    source.setData({
+      type: "FeatureCollection",
+      features: mapPreviewParcels.map((parcel) => ({
+        type: "Feature",
+        properties: { id: parcel.id },
+        geometry: {
+          type: "Polygon",
+          coordinates: [parcel.polygon],
+        },
+      })),
+    });
+    if (mapPreviewParcels.length) {
+      const bounds = new maplibregl.LngLatBounds();
+      mapPreviewParcels.forEach((parcel) => {
+        parcel.polygon.forEach((coord) => bounds.extend(coord));
+      });
+      map.fitBounds(bounds, { padding: 40, duration: 600 });
+    }
+  }, [mapPreviewParcels]);
+
+  const handlePreviewAdvance = () => {
+    goToPreviewIndex(streetPreviewIndex + 1);
+  };
+
+  const handlePreviewTouch = () => {
+    const now = Date.now();
+    if (now - lastPreviewTapRef.current < 300) {
+      handlePreviewAdvance();
+    }
+    lastPreviewTapRef.current = now;
+  };
+
   const startGpsCapture = (parcelId: number) => {
     if (!navigator.geolocation) {
       setLocationStatus("GPS not supported on this device.");
@@ -596,29 +798,115 @@ export default function VendorDashboard() {
       navigator.geolocation.clearWatch(watchIdRef.current);
     }
     activeCaptureIdRef.current = parcelId;
-    setLocationStatus("Acquiring GPS signal…");
+    setLocationStatus(
+      `Waiting for GPS accuracy ≤${minGpsAccuracyMeters}m...`
+    );
+    setSubParcels((current) =>
+      current.map((item) =>
+        item.id === parcelId
+          ? {
+              ...item,
+              mappingActive: true,
+              previewOpen: true,
+              rawPath: [],
+              cleanPath: [],
+              waitingForFix: true,
+              hasGoodFix: false,
+            }
+          : item
+      )
+    );
     watchIdRef.current = navigator.geolocation.watchPosition(
       (pos) => {
+        const accuracy = pos.coords.accuracy ?? 0;
         setLocationStatus(
-          `GPS accuracy ±${Math.round(pos.coords.accuracy)}m`
+          accuracy
+            ? `GPS accuracy ±${Math.round(accuracy)}m`
+            : "GPS signal acquired"
         );
         const nextPoint = {
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
         };
-        setSubParcels((current) =>
-          current.map((item) => {
-            if (item.id !== parcelId) return item;
-            const last = item.rawPath[item.rawPath.length - 1];
-            if (last && distance(last, nextPoint) < 3) {
-              return item;
+        let fusedPoint = nextPoint;
+        setSubParcels((current) => {
+          const parcel = current.find((item) => item.id === parcelId);
+          if (!parcel) return current;
+          const lastPoint = parcel.rawPath[parcel.rawPath.length - 1] ?? null;
+          const lastTimestamp = lastGpsTimestampRef.current[parcelId];
+          const dt =
+            typeof lastTimestamp === "number"
+              ? Math.max((pos.timestamp - lastTimestamp) / 1000, 0)
+              : 0;
+          const heading = headingRef.current;
+          const speed = pos.coords.speed ?? 0;
+          if (lastPoint && heading !== null && speed > 0.2 && dt > 0) {
+            const projected = movePoint(lastPoint, speed * dt, heading);
+            fusedPoint = smoothPoint(lastPoint, projected, accuracy);
+          } else if (lastPoint) {
+            fusedPoint = smoothPoint(lastPoint, nextPoint, accuracy);
+          }
+          lastGpsTimestampRef.current[parcelId] = pos.timestamp;
+
+          if (!parcel.hasGoodFix && accuracy > minGpsAccuracyMeters) {
+            return current.map((item) =>
+              item.id === parcelId
+                ? { ...item, gpsAccuracy: accuracy, waitingForFix: true }
+                : item
+            );
+          }
+
+          if (accuracy > minGpsAccuracyMeters) {
+            if (accuracy <= maxFusionAccuracyMeters && lastPoint && heading !== null) {
+              const nextRaw = [...parcel.rawPath, fusedPoint];
+              const nextClean = simplifyPath(nextRaw, 5);
+              return current.map((item) =>
+                item.id === parcelId
+                  ? {
+                      ...item,
+                      rawPath: nextRaw,
+                      cleanPath: nextClean,
+                      gpsAccuracy: accuracy,
+                      waitingForFix: false,
+                      hasGoodFix: true,
+                    }
+                  : item
+              );
             }
-            return {
-              ...item,
-              rawPath: [...item.rawPath, nextPoint],
-            };
-          })
-        );
+            return current.map((item) =>
+              item.id === parcelId
+                ? { ...item, gpsAccuracy: accuracy, waitingForFix: true }
+                : item
+            );
+          }
+
+          if (lastPoint && distance(lastPoint, fusedPoint) < 2) {
+            return current.map((item) =>
+              item.id === parcelId
+                ? {
+                    ...item,
+                    gpsAccuracy: accuracy,
+                    waitingForFix: false,
+                    hasGoodFix: true,
+                  }
+                : item
+            );
+          }
+          const nextRaw = [...parcel.rawPath, fusedPoint];
+          const nextClean = simplifyPath(nextRaw, 5);
+          return current.map((item) =>
+            item.id === parcelId
+              ? {
+                  ...item,
+                  rawPath: nextRaw,
+                  cleanPath: nextClean,
+                  gpsAccuracy: accuracy,
+                  waitingForFix: false,
+                  hasGoodFix: true,
+                }
+              : item
+          );
+        });
       },
       () => {
         setLocationStatus("Unable to read GPS. Try moving to open sky.");
@@ -637,12 +925,15 @@ export default function VendorDashboard() {
     setSubParcels((current) =>
       current.map((item) => {
         if (item.id !== parcelId) return item;
-        const cleaned = simplifyPath(item.rawPath, 5);
+        const closedRaw = closeLoop(item.rawPath);
+        const cleaned = simplifyPath(closedRaw, 5);
+        const closedClean = closeLoop(cleaned);
         return {
           ...item,
           mappingActive: false,
           previewOpen: true,
-          cleanPath: cleaned,
+          cleanPath: closedClean,
+          waitingForFix: false,
         };
       })
     );
@@ -654,6 +945,30 @@ export default function VendorDashboard() {
       return numeric * 1000;
     }
     return numeric;
+  };
+
+  const normalizeKshPrice = (price: string) => {
+    const trimmed = price.trim();
+    if (!trimmed) return "";
+    const cleaned = trimmed
+      .replace(/^ksh\s*/i, "")
+      .replace(/^usd\s*/i, "")
+      .replace(/^[$€£]\s*/i, "")
+      .trim()
+      .replace(/\s+/g, " ");
+    return cleaned ? `Ksh ${cleaned}` : "";
+  };
+
+  const formatKshInput = (value: string) => {
+    const trimmed = value.trim();
+    if (!trimmed) return "";
+    const numeric = trimmed.replace(/[^0-9.]/g, "");
+    if (!numeric) return trimmed;
+    const [wholeRaw, decimalRaw] = numeric.split(".");
+    const whole = wholeRaw.replace(/^0+(?=\d)/, "");
+    const formattedWhole = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    const decimal = decimalRaw ? `.${decimalRaw}` : "";
+    return `Ksh ${formattedWhole || "0"}${decimal}`;
   };
 
   const totalPostedValue =
@@ -692,6 +1007,7 @@ export default function VendorDashboard() {
     updater: (installments: SaleInstallment[]) => SaleInstallment[]
   ) => {
     setPendingSalesRecords((current) => {
+      const activeVendorId = getActiveVendorId();
       const updated = current.map((sale) => {
         if (sale.id !== saleId) return sale;
         const nextInstallments = updater(sale.installments);
@@ -700,12 +1016,16 @@ export default function VendorDashboard() {
           return sum + paid;
         }, 0);
         const remainingBalance = Math.max(sale.netToVendor - totalPaid, 0);
-        if (vendorId) {
-          updateDoc(doc(db, "pendingSales", sale.id), {
-            installments: nextInstallments,
-            totalPaid,
-            remainingBalance,
-          });
+        if (activeVendorId) {
+          setDoc(
+            doc(db, "pendingSales", sale.id),
+            {
+              installments: nextInstallments,
+              totalPaid,
+              remainingBalance,
+            },
+            { merge: true }
+          );
         }
         return {
           ...sale,
@@ -718,10 +1038,10 @@ export default function VendorDashboard() {
       const toMove = updated.filter((sale) => sale.remainingBalance <= 0);
       if (toMove.length > 0) {
         setSalesRecords((prev) => [...toMove, ...prev]);
-        if (vendorId) {
+        if (activeVendorId) {
           toMove.forEach(async (sale) => {
             await setDoc(doc(db, "sales", sale.id), {
-              vendorId,
+              vendorId: activeVendorId,
               ...sale,
               createdAt: serverTimestamp(),
             });
@@ -731,6 +1051,55 @@ export default function VendorDashboard() {
       }
       return updated.filter((sale) => sale.remainingBalance > 0);
     });
+  };
+
+  const submitPendingInstallment = async (saleId: string) => {
+    const draft = installmentDrafts[saleId];
+    if (!draft) return;
+    const amount = Number(draft.amount) || 0;
+    if (!amount || !draft.date) return;
+    setInstallmentDrafts((current) => ({
+      ...current,
+      [saleId]: { ...draft, saving: true },
+    }));
+    let proofName = "";
+    let proofUrl = "";
+    const activeVendorId = getActiveVendorId();
+    if (draft.proofFile && activeVendorId) {
+      const fileRef = ref(
+        storage,
+        `vendors/${activeVendorId}/pending-sales/${saleId}-${draft.proofFile.name}`
+      );
+      try {
+        await uploadBytes(fileRef, draft.proofFile);
+        proofName = draft.proofFile.name;
+        proofUrl = await getDownloadURL(fileRef);
+      } catch {
+        proofName = draft.proofFile.name;
+      }
+    }
+    updatePendingInstallments(saleId, (items) => [
+      ...items,
+      {
+        id: Date.now(),
+        amount: draft.amount,
+        date: draft.date,
+        method: draft.method,
+        proofName,
+        proofUrl,
+      },
+    ]);
+    setInstallmentDrafts((current) => ({
+      ...current,
+      [saleId]: {
+        amount: "",
+        date: "",
+        method: "Mobile money",
+        proofFile: null,
+        saving: false,
+      },
+    }));
+    setExpandedPendingId(null);
   };
 
   const markPlotSold = (plotId: string, parcelIndex?: number | null) => {
@@ -789,24 +1158,37 @@ export default function VendorDashboard() {
     setBuyerNameInput("");
     setSalePriceInput(plot.price.replace(/[^0-9.]/g, ""));
     setCharges([{ id: 1, label: "Processing fee", amount: "0", kind: "charge" }]);
-    setInstallments([
-      { id: 1, amount: "", date: "", method: "Mobile money", proofName: "" },
-    ]);
+    setInstallments([]);
+    setSaleType("cash");
     setSaleModalOpen(true);
   };
 
   const confirmSale = () => {
     if (!saleDraft) return;
+    const activeVendorId = getActiveVendorId();
     const salePrice = Number(salePriceInput) || 0;
     const totalDeductions = charges.reduce((sum, charge) => {
       const fee = Number(charge.amount) || 0;
       return sum + fee;
     }, 0);
-    const totalPaid = installments.reduce((sum, installment) => {
+    const netToVendor = Math.max(salePrice - totalDeductions, 0);
+    const today = new Date().toISOString().slice(0, 10);
+    const normalizedInstallments =
+      saleType === "cash"
+        ? [
+            {
+              id: Date.now(),
+              amount: netToVendor.toString(),
+              date: today,
+              method: "Cash" as const,
+              proofName: "",
+            },
+          ]
+        : installments;
+    const totalPaid = normalizedInstallments.reduce((sum, installment) => {
       const paid = Number(installment.amount) || 0;
       return sum + paid;
     }, 0);
-    const netToVendor = Math.max(salePrice - totalDeductions, 0);
     const remainingBalance = Math.max(netToVendor - totalPaid, 0);
 
     const newRecord: SalesRecord = {
@@ -819,24 +1201,24 @@ export default function VendorDashboard() {
       netToVendor,
       totalPaid,
       remainingBalance,
-      installments,
+      installments: normalizedInstallments,
       soldOn: "Sold today",
       agreementFile: "",
     };
     if (remainingBalance > 0) {
       setPendingSalesRecords((current) => [newRecord, ...current]);
-      if (vendorId) {
+      if (activeVendorId) {
         setDoc(doc(db, "pendingSales", newRecord.id), {
-          vendorId,
+          vendorId: activeVendorId,
           ...newRecord,
           createdAt: serverTimestamp(),
         });
       }
     } else {
       setSalesRecords((current) => [newRecord, ...current]);
-      if (vendorId) {
+      if (activeVendorId) {
         setDoc(doc(db, "sales", newRecord.id), {
-          vendorId,
+          vendorId: activeVendorId,
           ...newRecord,
           createdAt: serverTimestamp(),
         });
@@ -848,15 +1230,16 @@ export default function VendorDashboard() {
   };
 
   const saveDraftStep = async (nextStep: 1 | 2 | 3) => {
-    if (!vendorId) return;
+    const activeVendorId = getActiveVendorId();
+    if (!activeVendorId) return;
     setDraftSaving(true);
     try {
       if (!draftId) {
         const docRef = await addDoc(collection(db, "draftListings"), {
-          vendorId,
+          vendorId: activeVendorId,
           name: listingParcel,
           acres: listingSize,
-          price: listingPrice,
+          price: normalizeKshPrice(listingPrice),
           amenities: listingAmenities,
           step: nextStep,
           nodes: panoramaNodes.map((node) => ({
@@ -868,12 +1251,12 @@ export default function VendorDashboard() {
           createdAt: serverTimestamp(),
         });
         setDraftId(docRef.id);
-        await refreshDrafts(vendorId);
+        await refreshDrafts(activeVendorId);
       } else {
         await updateDoc(doc(db, "draftListings", draftId), {
           name: listingParcel,
           acres: listingSize,
-          price: listingPrice,
+          price: normalizeKshPrice(listingPrice),
           amenities: listingAmenities,
           step: nextStep,
           nodes: panoramaNodes.map((node) => ({
@@ -883,7 +1266,7 @@ export default function VendorDashboard() {
           })),
           updatedAt: serverTimestamp(),
         });
-        await refreshDrafts(vendorId);
+        await refreshDrafts(activeVendorId);
       }
     } finally {
       setDraftSaving(false);
@@ -900,7 +1283,7 @@ export default function VendorDashboard() {
         vendorType: vendorProfile?.type ?? "Individual",
         name: listingParcel,
         acres: listingSize,
-        price: listingPrice,
+        price: normalizeKshPrice(listingPrice),
         amenities: listingAmenities,
         nodes: panoramaNodes.map((node) => ({
           label: node.label,
@@ -916,13 +1299,14 @@ export default function VendorDashboard() {
       };
       const docRef = await addDoc(collection(db, "listings"), listingPayload);
       const totalParcels = subParcels.length || 1;
+      const normalizedPrice = normalizeKshPrice(listingPrice);
       setPlots((current) => [
         {
           id: docRef.id,
           name: listingParcel || "Untitled",
           status: "Listed",
           acres: listingSize,
-          price: listingPrice || "Ksh 0",
+          price: normalizedPrice || "Ksh 0",
           confidence: "—",
           totalParcels,
           soldParcelIds: [],
@@ -941,6 +1325,18 @@ export default function VendorDashboard() {
     }
   };
 
+  const validateListingStepOne = () => {
+    const nameOk = listingParcel.trim().length > 0;
+    const sizeOk = listingSize.trim().length > 0;
+    const priceOk = normalizeKshPrice(listingPrice).trim().length > 0;
+    if (!nameOk || !sizeOk || !priceOk) {
+      setListingStepError("Fill in parcel name, size, and price to continue.");
+      return false;
+    }
+    setListingStepError(null);
+    return true;
+  };
+
   return (
     <div className="min-h-screen overflow-x-hidden bg-[radial-gradient(circle_at_top,_#f9f1e6,_#f2ede4_55%,_#efe7d8)] text-[#14110f]">
       <header className="mx-auto flex max-w-6xl flex-col gap-4 px-4 py-4 sm:px-6 md:flex-row md:items-center md:justify-between">
@@ -949,7 +1345,7 @@ export default function VendorDashboard() {
             Vendor workspace
           </p>
           <h1 className="mt-2 font-serif text-2xl text-[#14110f] sm:text-3xl">
-            Welcome back, {vendorProfile?.name ?? "Amina"}.
+            Welcome back, {vendorProfile?.name ?? "Vendor"}.
           </h1>
         </div>
         <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
@@ -987,7 +1383,7 @@ export default function VendorDashboard() {
               </div>
               <div>
                 <p className="text-sm font-semibold text-[#14110f]">
-                  {vendorProfile?.name ?? "Amina Diallo"}
+                  {vendorProfile?.name ?? "Vendor"}
                 </p>
                 <p className="text-xs text-[#5a4a44]">
                   {vendorProfile?.type ?? "Vendor"} ·{" "}
@@ -997,7 +1393,7 @@ export default function VendorDashboard() {
             </div>
             <div className="mt-6 space-y-3 text-xs">
               {[
-                { label: "Active plots", value: "6" },
+                { label: "Active plots", value: String(plots.length) },
               ].map((item) => (
                 <div
                   key={item.label}
@@ -1019,7 +1415,6 @@ export default function VendorDashboard() {
                 { id: "active", label: "Active listings" },
                 { id: "drafts", label: "Drafts" },
                 { id: "inquiries", label: "Inquiries" },
-                { id: "sold", label: "Sold parcels" },
                 { id: "pending", label: "Pending sales" },
                 { id: "sales", label: "Sales" },
               ].map((tab) => (
@@ -1032,7 +1427,6 @@ export default function VendorDashboard() {
                         | "active"
                         | "drafts"
                         | "inquiries"
-                        | "sold"
                         | "pending"
                         | "sales"
                     )
@@ -1097,8 +1491,6 @@ export default function VendorDashboard() {
                     ? "Drafts"
                     : activeTab === "inquiries"
                     ? "Inquiries"
-                    : activeTab === "sold"
-                    ? "Sold"
                     : activeTab === "pending"
                     ? "Pending sales"
                     : "Sales"}
@@ -1110,8 +1502,6 @@ export default function VendorDashboard() {
                     ? "Draft listings"
                     : activeTab === "inquiries"
                     ? "Latest inquiries"
-                    : activeTab === "sold"
-                    ? "Sold parcels"
                     : activeTab === "pending"
                     ? "Pending sales"
                     : "Sales records"}
@@ -1299,6 +1689,7 @@ export default function VendorDashboard() {
                       setListingAmenities(draft.amenities);
                       setListingStep(draft.step);
                       setDraftId(draft.id);
+                      setListingStepError(null);
                       if (vendorId) {
                         const snap = await getDoc(
                           doc(db, "draftListings", draft.id)
@@ -1464,143 +1855,179 @@ export default function VendorDashboard() {
                           : "Update installments"}
                       </button>
                     </div>
+                    <div className="mt-3 rounded-2xl border border-[#eadfce] bg-white px-3 py-3 text-[11px] text-[#5a4a44]">
+                      <div className="flex items-center justify-between">
+                        <p className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                          Installments recorded
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <span className="rounded-full border border-[#eadfce] px-2 py-1 text-[9px] text-[#5a4a44]">
+                            {sale.installments.length}
+                          </span>
+                          {installmentsOpenId === sale.id ? (
+                            <button
+                              type="button"
+                              onClick={() => setInstallmentsOpenId(null)}
+                              className="rounded-full border border-[#eadfce] px-2 py-1 text-[9px] text-[#5a4a44]"
+                            >
+                              Close
+                            </button>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setInstallmentsOpenId(sale.id)}
+                              className="rounded-full border border-[#eadfce] px-2 py-1 text-[9px] text-[#5a4a44]"
+                            >
+                              View
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      {installmentsOpenId === sale.id && (
+                        <div className="mt-3 overflow-x-auto">
+                        <table className="w-full text-left text-[11px]">
+                          <thead className="text-[10px] uppercase tracking-[0.2em] text-[#a67047]">
+                            <tr>
+                              <th className="py-2 pr-3">Amount</th>
+                              <th className="py-2 pr-3">Date</th>
+                              <th className="py-2 pr-3">Method</th>
+                              <th className="py-2">Proof</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {sale.installments.map((installment) => (
+                              <tr key={installment.id} className="border-t border-[#f0e5d6]">
+                                <td className="py-2 pr-3">
+                                  Ksh{" "}
+                                  {Number(installment.amount || 0).toLocaleString()}
+                                </td>
+                                <td className="py-2 pr-3">
+                                  {installment.date || "—"}
+                                </td>
+                                <td className="py-2 pr-3">{installment.method}</td>
+                                <td className="py-2">
+                                  {installment.proofUrl ? (
+                                    <a
+                                      href={installment.proofUrl}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="inline-flex rounded-full border border-[#eadfce] px-2 py-1 text-[10px] text-[#1f3d2d]"
+                                      title={installment.proofName || "View proof"}
+                                    >
+                                      View
+                                    </a>
+                                  ) : (
+                                    <span className="text-[#8a7a70]">—</span>
+                                  )}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        </div>
+                      )}
+                    </div>
                     {expandedPendingId === sale.id && (
                       <div className="mt-3 rounded-2xl border border-[#eadfce] bg-white px-3 py-3 text-[11px] text-[#5a4a44]">
                         <p className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
-                          Installments
+                          Add / update installments
                         </p>
-                        <div className="mt-2 space-y-2">
-                          {sale.installments.map((installment) => (
-                            <div
-                              key={installment.id}
-                              className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_140px_140px_auto]"
-                            >
-                              <input
-                                type="number"
-                                value={installment.amount}
-                                onChange={(event) =>
-                                  updatePendingInstallments(sale.id, (items) =>
-                                    items.map((item) =>
-                                      item.id === installment.id
-                                        ? {
-                                            ...item,
-                                            amount: event.target.value,
-                                          }
-                                        : item
-                                    )
-                                  )
-                                }
-                                placeholder="Amount paid"
-                                className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
-                              />
-                              <input
-                                type="date"
-                                value={installment.date}
-                                onChange={(event) =>
-                                  updatePendingInstallments(sale.id, (items) =>
-                                    items.map((item) =>
-                                      item.id === installment.id
-                                        ? {
-                                            ...item,
-                                            date: event.target.value,
-                                          }
-                                        : item
-                                    )
-                                  )
-                                }
-                                className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
-                              />
-                              <select
-                                value={installment.method}
-                                onChange={(event) =>
-                                  updatePendingInstallments(sale.id, (items) =>
-                                    items.map((item) =>
-                                      item.id === installment.id
-                                        ? {
-                                            ...item,
-                                            method: event.target.value as
-                                              | "Cash"
-                                              | "Bank transfer"
-                                              | "Mobile money",
-                                          }
-                                        : item
-                                    )
-                                  )
-                                }
-                                className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
-                              >
-                                <option value="Mobile money">Mobile money</option>
-                                <option value="Bank transfer">Bank transfer</option>
-                                <option value="Cash">Cash</option>
-                              </select>
-                              <button
-                                type="button"
-                                onClick={() =>
-                                  updatePendingInstallments(sale.id, (items) =>
-                                    items.length === 1
-                                      ? items
-                                      : items.filter(
-                                          (item) => item.id !== installment.id
-                                        )
-                                  )
-                                }
-                                className="rounded-full border border-[#eadfce] px-3 py-2 text-xs text-[#5a4a44]"
-                              >
-                                Remove
-                              </button>
-                              <div className="sm:col-span-4">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <input
-                                    type="file"
-                                    accept="application/pdf,image/*"
-                                    onChange={(event) => {
-                                      const file = event.target.files?.[0];
-                                      updatePendingInstallments(sale.id, (items) =>
-                                        items.map((item) =>
-                                          item.id === installment.id
-                                            ? {
-                                                ...item,
-                                                proofName: file
-                                                  ? file.name
-                                                  : "",
-                                              }
-                                            : item
-                                        )
-                                      );
-                                    }}
-                                    className="text-xs text-[#5a4a44] file:mr-3 file:rounded-full file:border-0 file:bg-[#c77d4b] file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white"
-                                  />
-                                  {installment.proofName ? (
-                                    <span className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#6b3e1e]">
-                                      {installment.proofName}
-                                    </span>
-                                  ) : (
-                                    <span className="text-[10px] text-[#7a6a63]">
-                                      Optional payment proof
-                                    </span>
-                                  )}
-                                </div>
-                              </div>
-                            </div>
-                          ))}
+                        <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_140px_140px]">
+                          <input
+                            type="number"
+                            value={installmentDrafts[sale.id]?.amount ?? ""}
+                            onChange={(event) =>
+                              setInstallmentDrafts((current) => ({
+                                ...current,
+                                [sale.id]: {
+                                  amount: event.target.value,
+                                  date: current[sale.id]?.date ?? "",
+                                  method:
+                                    current[sale.id]?.method ?? "Mobile money",
+                                  proofFile: current[sale.id]?.proofFile ?? null,
+                                },
+                              }))
+                            }
+                            placeholder="Amount paid"
+                            className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                          />
+                          <input
+                            type="date"
+                            value={installmentDrafts[sale.id]?.date ?? ""}
+                            onChange={(event) =>
+                              setInstallmentDrafts((current) => ({
+                                ...current,
+                                [sale.id]: {
+                                  amount: current[sale.id]?.amount ?? "",
+                                  date: event.target.value,
+                                  method:
+                                    current[sale.id]?.method ?? "Mobile money",
+                                  proofFile: current[sale.id]?.proofFile ?? null,
+                                },
+                              }))
+                            }
+                            className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                          />
+                          <select
+                            value={installmentDrafts[sale.id]?.method ?? "Mobile money"}
+                            onChange={(event) =>
+                              setInstallmentDrafts((current) => ({
+                                ...current,
+                                [sale.id]: {
+                                  amount: current[sale.id]?.amount ?? "",
+                                  date: current[sale.id]?.date ?? "",
+                                  method: event.target.value as
+                                    | "Cash"
+                                    | "Bank transfer"
+                                    | "Mobile money",
+                                  proofFile: current[sale.id]?.proofFile ?? null,
+                                },
+                              }))
+                            }
+                            className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                          >
+                            <option value="Mobile money">Mobile money</option>
+                            <option value="Bank transfer">Bank transfer</option>
+                            <option value="Cash">Cash</option>
+                          </select>
+                        </div>
+                        <div className="mt-3 flex flex-wrap items-center gap-2">
+                          <input
+                            type="file"
+                            accept="application/pdf,image/*"
+                            onChange={(event) =>
+                              setInstallmentDrafts((current) => ({
+                                ...current,
+                                [sale.id]: {
+                                  amount: current[sale.id]?.amount ?? "",
+                                  date: current[sale.id]?.date ?? "",
+                                  method:
+                                    current[sale.id]?.method ?? "Mobile money",
+                                  proofFile: event.target.files?.[0] ?? null,
+                                },
+                              }))
+                            }
+                            className="text-xs text-[#5a4a44] file:mr-3 file:rounded-full file:border-0 file:bg-[#c77d4b] file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white"
+                          />
+                          {installmentDrafts[sale.id]?.proofFile ? (
+                            <span className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#6b3e1e]">
+                              {installmentDrafts[sale.id]?.proofFile?.name}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-[#7a6a63]">
+                              Optional payment proof
+                            </span>
+                          )}
                         </div>
                         <button
                           type="button"
-                          onClick={() =>
-                            updatePendingInstallments(sale.id, (items) => [
-                              ...items,
-                              {
-                                id: Date.now(),
-                                amount: "",
-                                date: "",
-                                method: "Mobile money",
-                                proofName: "",
-                              },
-                            ])
-                          }
-                          className="mt-3 rounded-full border border-[#eadfce] px-3 py-2 text-[11px] text-[#5a4a44]"
+                          onClick={() => submitPendingInstallment(sale.id)}
+                          className="mt-3 rounded-full bg-[#1f3d2d] px-3 py-2 text-[11px] font-semibold text-white"
+                          disabled={installmentDrafts[sale.id]?.saving}
                         >
-                          Add installment
+                          {installmentDrafts[sale.id]?.saving
+                            ? "Saving..."
+                            : "Add installment"}
                         </button>
                       </div>
                     )}
@@ -1676,36 +2103,6 @@ export default function VendorDashboard() {
               </div>
             )}
 
-            {activeTab === "sold" && (
-              <div className="mt-5 space-y-3 text-sm">
-                {soldListings.map((sold) => (
-                  <div
-                    key={sold.id}
-                    className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-4 py-3"
-                  >
-                    <div>
-                      <p className="text-xs uppercase tracking-[0.3em] text-[#a67047]">
-                        {sold.id}
-                      </p>
-                      <p className="mt-1 font-semibold text-[#14110f]">
-                        {sold.name}
-                      </p>
-                      <p className="mt-1 text-xs text-[#5a4a44]">
-                        {sold.acres} · {sold.price}
-                      </p>
-                      {sold.totalParcels && (
-                        <p className="mt-1 text-[11px] text-[#6b3e1e]">
-                          Parcels sold: {sold.soldParcels} / {sold.totalParcels}
-                        </p>
-                      )}
-                    </div>
-                    <span className="rounded-full border border-[#eadfce] bg-white px-3 py-1 text-xs text-[#7a5f54]">
-                      {sold.soldOn}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
 
         </section>
@@ -1717,7 +2114,6 @@ export default function VendorDashboard() {
               { id: "active", label: "Active" },
               { id: "drafts", label: "Drafts" },
               { id: "inquiries", label: "Inquiries" },
-              { id: "sold", label: "Sold" },
               { id: "pending", label: "Pending" },
               { id: "sales", label: "Sales" },
             ].map((tab) => (
@@ -1730,7 +2126,6 @@ export default function VendorDashboard() {
                       | "active"
                       | "drafts"
                       | "inquiries"
-                      | "sold"
                       | "pending"
                       | "sales"
                   )
@@ -1793,6 +2188,32 @@ export default function VendorDashboard() {
                     placeholder="e.g. 48000"
                     className="mt-2 w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
                   />
+                </div>
+              </div>
+              <div>
+                <label className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                  Sale type
+                </label>
+                <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
+                  {[
+                    { id: "cash", label: "Cash sale" },
+                    { id: "installments", label: "Installments" },
+                  ].map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      onClick={() =>
+                        setSaleType(option.id as "cash" | "installments")
+                      }
+                      className={`rounded-full px-3 py-1 text-[11px] transition ${
+                        saleType === option.id
+                          ? "bg-[#1f3d2d] text-white"
+                          : "border border-[#eadfce] bg-white text-[#5a4a44]"
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
                 </div>
               </div>
               <div>
@@ -1885,136 +2306,136 @@ export default function VendorDashboard() {
                   Add item
                 </button>
               </div>
-              <div>
-                <label className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
-                  Installments
-                </label>
-                <div className="mt-2 space-y-2">
-                  {installments.map((installment) => (
-                    <div
-                      key={installment.id}
-                      className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_140px_140px_auto]"
-                    >
-                      <input
-                        type="number"
-                        value={installment.amount}
-                        onChange={(event) =>
-                          setInstallments((current) =>
-                            current.map((item) =>
-                              item.id === installment.id
-                                ? { ...item, amount: event.target.value }
-                                : item
-                            )
-                          )
-                        }
-                        placeholder="Amount paid"
-                        className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
-                      />
-                      <input
-                        type="date"
-                        value={installment.date}
-                        onChange={(event) =>
-                          setInstallments((current) =>
-                            current.map((item) =>
-                              item.id === installment.id
-                                ? { ...item, date: event.target.value }
-                                : item
-                            )
-                          )
-                        }
-                        className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
-                      />
-                      <select
-                        value={installment.method}
-                        onChange={(event) =>
-                          setInstallments((current) =>
-                            current.map((item) =>
-                              item.id === installment.id
-                                ? {
-                                    ...item,
-                                    method: event.target.value as
-                                      | "Cash"
-                                      | "Bank transfer"
-                                      | "Mobile money",
-                                  }
-                                : item
-                            )
-                          )
-                        }
-                        className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
-                      >
-                        <option value="Mobile money">Mobile money</option>
-                        <option value="Bank transfer">Bank transfer</option>
-                        <option value="Cash">Cash</option>
-                      </select>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setInstallments((current) =>
-                            current.length === 1
-                              ? current
-                              : current.filter(
-                                  (item) => item.id !== installment.id
-                                )
-                          )
-                        }
-                        className="rounded-full border border-[#eadfce] px-3 py-2 text-xs text-[#5a4a44]"
-                      >
-                        Remove
-                      </button>
-                      <div className="sm:col-span-4">
-                        <div className="flex flex-wrap items-center gap-2">
+              {saleType === "installments" && (
+                <div>
+                  <label className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                    Installments
+                  </label>
+                  {installments.length > 0 && (
+                    <div className="mt-2 space-y-2">
+                      {installments.map((installment) => (
+                        <div
+                          key={installment.id}
+                          className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_140px_140px_auto]"
+                        >
                           <input
-                            type="file"
-                            accept="application/pdf,image/*"
-                            onChange={(event) => {
-                              const file = event.target.files?.[0];
+                            type="number"
+                            value={installment.amount}
+                            onChange={(event) =>
+                              setInstallments((current) =>
+                                current.map((item) =>
+                                  item.id === installment.id
+                                    ? { ...item, amount: event.target.value }
+                                    : item
+                                )
+                              )
+                            }
+                            placeholder="Amount paid"
+                            className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                          />
+                          <input
+                            type="date"
+                            value={installment.date}
+                            onChange={(event) =>
+                              setInstallments((current) =>
+                                current.map((item) =>
+                                  item.id === installment.id
+                                    ? { ...item, date: event.target.value }
+                                    : item
+                                )
+                              )
+                            }
+                            className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                          />
+                          <select
+                            value={installment.method}
+                            onChange={(event) =>
                               setInstallments((current) =>
                                 current.map((item) =>
                                   item.id === installment.id
                                     ? {
                                         ...item,
-                                        proofName: file ? file.name : "",
+                                        method: event.target.value as
+                                          | "Cash"
+                                          | "Bank transfer"
+                                          | "Mobile money",
                                       }
                                     : item
                                 )
-                              );
-                            }}
-                            className="text-xs text-[#5a4a44] file:mr-3 file:rounded-full file:border-0 file:bg-[#c77d4b] file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white"
-                          />
-                          {installment.proofName ? (
-                            <span className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#6b3e1e]">
-                              {installment.proofName}
-                            </span>
-                          ) : (
-                            <span className="text-[10px] text-[#7a6a63]">
-                              Optional payment proof
-                            </span>
-                          )}
+                              )
+                            }
+                            className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                          >
+                            <option value="Mobile money">Mobile money</option>
+                            <option value="Bank transfer">Bank transfer</option>
+                            <option value="Cash">Cash</option>
+                          </select>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setInstallments((current) =>
+                                current.filter((item) => item.id !== installment.id)
+                              )
+                            }
+                            className="rounded-full border border-[#eadfce] px-3 py-2 text-xs text-[#5a4a44]"
+                          >
+                            Remove
+                          </button>
+                          <div className="sm:col-span-4">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <input
+                                type="file"
+                                accept="application/pdf,image/*"
+                                onChange={(event) => {
+                                  const file = event.target.files?.[0];
+                                  setInstallments((current) =>
+                                    current.map((item) =>
+                                      item.id === installment.id
+                                        ? {
+                                            ...item,
+                                            proofName: file ? file.name : "",
+                                          }
+                                        : item
+                                    )
+                                  );
+                                }}
+                                className="text-xs text-[#5a4a44] file:mr-3 file:rounded-full file:border-0 file:bg-[#c77d4b] file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white"
+                              />
+                              {installment.proofName ? (
+                                <span className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#6b3e1e]">
+                                  {installment.proofName}
+                                </span>
+                              ) : (
+                                <span className="text-[10px] text-[#7a6a63]">
+                                  Optional payment proof
+                                </span>
+                              )}
+                            </div>
+                          </div>
                         </div>
-                      </div>
+                      ))}
                     </div>
-                  ))}
+                  )}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setInstallments((current) => [
+                        ...current,
+                        {
+                          id: Date.now(),
+                          amount: "",
+                          date: "",
+                          method: "Mobile money",
+                          proofName: "",
+                        },
+                      ])
+                    }
+                    className="mt-3 rounded-full border border-[#eadfce] px-3 py-2 text-xs text-[#5a4a44]"
+                  >
+                    Add installment
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setInstallments((current) => [
-                      ...current,
-                      {
-                        id: Date.now(),
-                        amount: "",
-                        date: "",
-                        method: "Mobile money",
-                        proofName: "",
-                      },
-                    ])
-                  }
-                  className="mt-3 rounded-full border border-[#eadfce] px-3 py-2 text-xs text-[#5a4a44]"
-                >
-                  Add installment
-                </button>
-              </div>
+              )}
               <div className="rounded-2xl border border-[#eadfce] bg-white px-4 py-3 text-[11px] text-[#5a4a44]">
                 <p>
                   Net to vendor: $
@@ -2029,12 +2450,20 @@ export default function VendorDashboard() {
                 </p>
                 <p className="mt-1">
                   Total paid: $
-                  {installments
-                    .reduce((sum, installment) => {
-                      const paid = Number(installment.amount) || 0;
-                      return sum + paid;
-                    }, 0)
-                    .toLocaleString()}
+                  {(saleType === "cash"
+                    ? Math.max(
+                        (Number(salePriceInput) || 0) -
+                          charges.reduce((sum, charge) => {
+                            const fee = Number(charge.amount) || 0;
+                            return sum + fee;
+                          }, 0),
+                        0
+                      )
+                    : installments.reduce((sum, installment) => {
+                        const paid = Number(installment.amount) || 0;
+                        return sum + paid;
+                      }, 0)
+                  ).toLocaleString()}
                 </p>
                 <p className="mt-1">
                   Remaining balance: $
@@ -2047,10 +2476,19 @@ export default function VendorDashboard() {
                         }, 0),
                       0
                     ) -
-                      installments.reduce((sum, installment) => {
-                        const paid = Number(installment.amount) || 0;
-                        return sum + paid;
-                      }, 0),
+                      (saleType === "cash"
+                        ? Math.max(
+                            (Number(salePriceInput) || 0) -
+                              charges.reduce((sum, charge) => {
+                                const fee = Number(charge.amount) || 0;
+                                return sum + fee;
+                              }, 0),
+                            0
+                          )
+                        : installments.reduce((sum, installment) => {
+                            const paid = Number(installment.amount) || 0;
+                            return sum + paid;
+                          }, 0)),
                     0
                   ).toLocaleString()}
                 </p>
@@ -2110,7 +2548,10 @@ export default function VendorDashboard() {
                   <input
                     type="text"
                     value={listingParcel}
-                    onChange={(event) => setListingParcel(event.target.value)}
+                    onChange={(event) => {
+                      setListingParcel(event.target.value);
+                      setListingStepError(null);
+                    }}
                     placeholder="Plot name"
                     className="mt-2 w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
                   />
@@ -2122,7 +2563,10 @@ export default function VendorDashboard() {
                   <input
                     type="text"
                     value={listingSize}
-                    onChange={(event) => setListingSize(event.target.value)}
+                    onChange={(event) => {
+                      setListingSize(event.target.value);
+                      setListingStepError(null);
+                    }}
                     placeholder="e.g. 2.6 acres"
                     className="mt-2 w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
                   />
@@ -2134,11 +2578,19 @@ export default function VendorDashboard() {
                   <input
                     type="text"
                     value={listingPrice}
-                    onChange={(event) => setListingPrice(event.target.value)}
-                    placeholder="e.g. $48k"
+                    onChange={(event) => {
+                      setListingPrice(formatKshInput(event.target.value));
+                      setListingStepError(null);
+                    }}
+                    placeholder="e.g. Ksh 48k"
                     className="mt-2 w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
                   />
                 </div>
+                {listingStepError && (
+                  <div className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-[11px] text-[#b3261e] md:col-span-2">
+                    {listingStepError}
+                  </div>
+                )}
                 <div className="md:col-span-2">
                   <label className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
                     Amenities
@@ -2183,70 +2635,17 @@ export default function VendorDashboard() {
               <div className="mt-6 space-y-5 text-xs text-[#3a2f2a]">
                 <div className="rounded-2xl border border-[#eadfce] bg-white px-4 py-4">
                   <p className="text-[10px] uppercase tracking-[0.3em] text-[#a67047]">
-                    Panorama instructions
+                    Street view instructions
                   </p>
                   <p className="mt-2 text-xs">
-                    Start at the nearest landmark. Record your start point,
-                    then capture a 360 at every turn, junction, or 20-40 meters.
+                    Capture flat photos at equal distances along the path.
                   </p>
                   <p className="mt-2 text-xs">
-                    Keep the path continuous: each node should visually connect
-                    to the previous one.
+                    Keep the camera level and facing forward for a smooth tour.
                   </p>
                   <p className="mt-2 text-xs">
-                    Use your camera app to capture 360 photos, then upload each
-                    node below.
+                    Upload each node photo below to build the preview.
                   </p>
-                </div>
-
-                <div className="rounded-2xl border border-[#eadfce] bg-white px-4 py-4">
-                  <p className="text-[10px] uppercase tracking-[0.3em] text-[#a67047]">
-                    Start point
-                  </p>
-                  <p className="mt-2 text-xs">
-                    Tap â€œPick my current locationâ€ at the landmark to record
-                    the tour start.
-                  </p>
-                  <div className="mt-3 flex flex-wrap items-center gap-3">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setLocationStatus(null);
-                        if (!navigator.geolocation) {
-                          setLocationStatus("Geolocation not supported.");
-                          return;
-                        }
-                        navigator.geolocation.getCurrentPosition(
-                          (position) => {
-                            const { latitude, longitude } = position.coords;
-                            setStartPoint(
-                              `${latitude.toFixed(6)}, ${longitude.toFixed(6)}`
-                            );
-                            setLocationStatus("Start point saved.");
-                          },
-                          () => {
-                            setLocationStatus(
-                              "Unable to access location. Check permissions."
-                            );
-                          },
-                          { enableHighAccuracy: true, timeout: 10000 }
-                        );
-                      }}
-                      className="rounded-full bg-[#1f3d2d] px-4 py-2 text-xs font-semibold text-white"
-                    >
-                      Pick my current location
-                    </button>
-                    {startPoint && (
-                      <span className="rounded-full border border-[#eadfce] px-3 py-1 text-[11px] text-[#5a4a44]">
-                        {startPoint}
-                      </span>
-                    )}
-                  </div>
-                  {locationStatus && (
-                    <p className="mt-2 text-[11px] text-[#6b3e1e]">
-                      {locationStatus}
-                    </p>
-                  )}
                 </div>
                 <div className="space-y-3">
                   {panoramaNodes.map((node) => (
@@ -2279,6 +2678,7 @@ export default function VendorDashboard() {
                           capture="environment"
                           onChange={(event) => {
                             const files = event.target.files;
+                            setStreetPreviewError(null);
                             setPanoramaNodes((current) =>
                               current.map((item) =>
                                 item.id === node.id
@@ -2287,10 +2687,11 @@ export default function VendorDashboard() {
                               )
                             );
                             const file = files?.[0];
-                            if (file && vendorId) {
+                            const activeVendorId = getActiveVendorId();
+                            if (file && activeVendorId) {
                               const fileRef = ref(
                                 storage,
-                                `vendors/${vendorId}/nodes/${node.id}-${file.name}`
+                                `vendors/${activeVendorId}/nodes/${node.id}-${file.name}`
                               );
                               uploadBytes(fileRef, file).then(() =>
                                 getDownloadURL(fileRef).then((url) => {
@@ -2314,13 +2715,13 @@ export default function VendorDashboard() {
                                             ...item,
                                             coords: {
                                               lat: pos.coords.latitude,
-                                          lng: pos.coords.longitude,
-                                        },
-                                      }
-                                    : item
-                                )
-                              );
-                            },
+                                              lng: pos.coords.longitude,
+                                            },
+                                          }
+                                        : item
+                                    )
+                                  );
+                                },
                                 () => {
                                   setLocationStatus(
                                     "Unable to capture node location."
@@ -2360,19 +2761,155 @@ export default function VendorDashboard() {
                         },
                       ])
                     }
-                    className={`rounded-full border border-[#eadfce] px-3 py-2 text-xs ${
-                      startPoint
-                        ? "text-[#5a4a44]"
-                        : "cursor-not-allowed text-[#b8a79e]"
-                    }`}
-                    disabled={!startPoint}
+                    className="rounded-full border border-[#eadfce] px-3 py-2 text-xs text-[#5a4a44]"
                   >
                     Add another node
                   </button>
                   <span className="text-[10px] text-[#6b3e1e]">
-                    Record the start point before adding nodes.
+                    Add as many nodes as needed for a smooth preview.
                   </span>
                 </div>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <button
+                    type="button"
+                    onClick={openStreetPreview}
+                    className="rounded-full bg-[#1f3d2d] px-4 py-2 text-xs font-semibold text-white"
+                  >
+                    Complete node collection
+                  </button>
+                  {streetPreviewError ? (
+                    <span className="text-[10px] text-[#b3261e]">
+                      {streetPreviewError}
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-[#6b3e1e]">
+                      Build a street preview from your captured nodes.
+                    </span>
+                  )}
+                </div>
+                {streetPreviewOpen && previewNodes.length > 0 && (
+                  <div className="rounded-2xl border border-[#eadfce] bg-white px-4 py-4">
+                    <div className="flex items-center justify-between">
+                      <p className="text-[10px] uppercase tracking-[0.3em] text-[#a67047]">
+                        Street view preview
+                      </p>
+                      <button
+                        type="button"
+                        onClick={() => setStreetPreviewOpen(false)}
+                        className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#5a4a44]"
+                      >
+                        Close
+                      </button>
+                    </div>
+                    <div className="relative mt-4 overflow-hidden rounded-2xl border border-[#eadfce] bg-[#fbf8f3] perspective-1000">
+                      {streetPreviewPrevIndex !== null && (
+                        <div
+                          key={`street-prev-${streetPreviewPrevIndex}`}
+                          className={`absolute inset-0 bg-cover bg-center transition-opacity duration-300 ease-out street-pan-3d ${
+                            streetPreviewAnimating ? "opacity-0" : "opacity-100"
+                          } street-swipe-out`}
+                          style={{
+                            backgroundImage: `url(${previewNodes[streetPreviewPrevIndex]?.imageUrl})`,
+                            backgroundSize: "130% 100%",
+                            backgroundPosition: `${streetPanValue}% 50%`,
+                            transform: `translateX(${(50 - streetPanValue) * 0.04}%) rotateY(${(streetPanValue - 50) * 0.08}deg)`,
+                          }}
+                        />
+                      )}
+                      <div
+                        key={`street-current-${streetPreviewIndex}`}
+                        className={`relative h-64 w-full bg-cover bg-center transition-all duration-300 ease-out street-pan street-pan-3d street-swipe-in ${
+                          streetPreviewAnimating
+                            ? "scale-[1.02] opacity-90"
+                            : "scale-100 opacity-100"
+                        }`}
+                        style={{
+                          backgroundImage: `url(${previewNodes[streetPreviewIndex]?.imageUrl})`,
+                          backgroundSize: "130% 100%",
+                          backgroundPosition: `${streetPanValue}% 50%`,
+                          transform: `translateX(${(50 - streetPanValue) * 0.04}%) rotateY(${(streetPanValue - 50) * 0.08}deg)`,
+                        }}
+                        onDoubleClick={handlePreviewAdvance}
+                        onTouchEnd={handlePreviewTouch}
+                        role="button"
+                        tabIndex={0}
+                        aria-label="Advance to next street view node"
+                      />
+                      <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-between px-4 py-3 text-[10px] text-white">
+                        <span className="rounded-full bg-black/40 px-2 py-1">
+                          Node {streetPreviewIndex + 1} of{" "}
+                          {previewNodes.length}
+                        </span>
+                        <span className="rounded-full bg-black/40 px-2 py-1">
+                          Double tap to advance
+                        </span>
+                      </div>
+                    </div>
+                    <div className="mt-3 flex items-center gap-3">
+                      <span className="rounded-full border border-[#eadfce] bg-white px-3 py-1 text-[10px] text-[#5a4a44]">
+                        Pan
+                      </span>
+                      <input
+                        type="range"
+                        min={0}
+                        max={100}
+                        value={streetPanValue}
+                        onChange={(event) =>
+                          setStreetPanValue(Number(event.target.value))
+                        }
+                        className="w-full accent-[#1f3d2d]"
+                      />
+                    </div>
+                    <style jsx>{`
+                      .perspective-1000 {
+                        perspective: 1000px;
+                      }
+                      .street-pan-3d {
+                        transform-style: preserve-3d;
+                      }
+                      .street-swipe-in {
+                        animation: streetSwipeIn 520ms cubic-bezier(0.2, 0.8, 0.2, 1);
+                      }
+                      .street-swipe-out {
+                        animation: streetSwipeOut 520ms cubic-bezier(0.2, 0.8, 0.2, 1);
+                      }
+                      @keyframes streetSwipeIn {
+                        0% {
+                          opacity: 0;
+                          transform: translateX(8%) scale(1.2);
+                          filter: blur(6px);
+                        }
+                        60% {
+                          opacity: 0.95;
+                          transform: translateX(2%) scale(1.02);
+                          filter: blur(1.5px);
+                        }
+                        100% {
+                          opacity: 1;
+                          transform: translateX(0%) scale(1);
+                          filter: blur(0px);
+                        }
+                      }
+                      @keyframes streetSwipeOut {
+                        0% {
+                          opacity: 1;
+                          transform: translateX(0%) scale(1);
+                          filter: blur(0px);
+                        }
+                        60% {
+                          opacity: 0.6;
+                          transform: translateX(-4%) scale(1.08);
+                          filter: blur(3px);
+                        }
+                        100% {
+                          opacity: 0;
+                          transform: translateX(-10%) scale(1.12);
+                          filter: blur(6px);
+                        }
+                      }
+                    `}</style>
+                  </div>
+                )}
               </div>
             )}
 
@@ -2435,6 +2972,9 @@ export default function VendorDashboard() {
                           previewOpen: false,
                           rawPath: [],
                           cleanPath: [],
+                          gpsAccuracy: undefined,
+                          waitingForFix: false,
+                          hasGoodFix: false,
                         },
                       ])
                     }
@@ -2444,6 +2984,25 @@ export default function VendorDashboard() {
                   </button>
                 </div>
                 <div className="rounded-2xl border border-[#eadfce] bg-white px-4 py-4">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-[10px] uppercase tracking-[0.3em] text-[#a67047]">
+                        Map preview
+                      </p>
+                      <p className="mt-2 text-xs text-[#5a4a44]">
+                        Preview and adjust parcel positions on the map.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setMapPreviewOpen(true)}
+                      className="rounded-full bg-[#1f3d2d] px-4 py-2 text-xs font-semibold text-white"
+                    >
+                      Open map preview
+                    </button>
+                  </div>
+                </div>
+                <div className="rounded-2xl border border-[#eadfce] bg-white px-4 py-4">
                   <p className="text-[10px] uppercase tracking-[0.3em] text-[#a67047]">
                     Mapping instructions
                   </p>
@@ -2451,6 +3010,9 @@ export default function VendorDashboard() {
                     <li>
                       Stand at the nearest recognizable beacon or plot corner and tap
                       "Start mapping".
+                    </li>
+                    <li>
+                      Wait until GPS accuracy reads within 1-3m before moving.
                     </li>
                     <li>
                       Walk the full perimeter of the parcel. Keep your phone
@@ -2509,8 +3071,11 @@ export default function VendorDashboard() {
                                     ? {
                                         ...item,
                                         mappingActive: true,
-                                        previewOpen: false,
+                                        previewOpen: true,
                                         rawPath: [],
+                                        cleanPath: [],
+                                        waitingForFix: true,
+                                        hasGoodFix: false,
                                       }
                                     : item
                                 )
@@ -2592,6 +3157,19 @@ export default function VendorDashboard() {
                               km (est.)
                             </span>
                           </div>
+                          {parcel.mappingActive && (
+                            <div className="mt-3 flex flex-wrap items-center justify-between text-[10px] text-[#6b3e1e]">
+                              <span>
+                                Live capture{" "}
+                                {parcel.waitingForFix
+                                  ? `(waiting for ≤${minGpsAccuracyMeters}m)`
+                                  : "(tracking)"}
+                              </span>
+                              {parcel.gpsAccuracy ? (
+                                <span>±{Math.round(parcel.gpsAccuracy)}m</span>
+                              ) : null}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
@@ -2623,6 +3201,9 @@ export default function VendorDashboard() {
                   <button
                     type="button"
                     onClick={async () => {
+                      if (listingStep === 1 && !validateListingStepOne()) {
+                        return;
+                      }
                       const nextStep = (listingStep === 1 ? 2 : 3) as 1 | 2 | 3;
                       await saveDraftStep(nextStep);
                       setListingStep(nextStep);
@@ -2647,6 +3228,46 @@ export default function VendorDashboard() {
                   </>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {mapPreviewOpen && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6">
+          <div className="w-full max-w-4xl max-h-[90vh] overflow-hidden rounded-3xl border border-[#eadfce] bg-[#fbf8f3] p-6 shadow-[0_30px_70px_-40px_rgba(20,17,15,0.6)]">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.35em] text-[#a67047]">
+                  Parcel map preview
+                </p>
+                <p className="mt-2 text-lg font-semibold text-[#14110f]">
+                  Adjust parcel positions
+                </p>
+                <p className="mt-1 text-xs text-[#5a4a44]">
+                  Drag any parcel boundary to reposition it on the map.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setMapPreviewOpen(false)}
+                className="rounded-full border border-[#eadfce] px-3 py-1 text-xs text-[#5a4a44]"
+              >
+                Close
+              </button>
+            </div>
+            <div className="mt-4 overflow-hidden rounded-3xl border border-[#eadfce] bg-white">
+              <div ref={mapPreviewRef} className="h-[420px] w-full" />
+            </div>
+            <div className="mt-4 flex items-center justify-between text-xs text-[#5a4a44]">
+              <span>Tip: Click and drag a parcel to nudge its position.</span>
+              <button
+                type="button"
+                onClick={() => setMapPreviewOpen(false)}
+                className="rounded-full bg-[#1f3d2d] px-4 py-2 text-xs font-semibold text-white"
+              >
+                Save positions
+              </button>
             </div>
           </div>
         </div>
