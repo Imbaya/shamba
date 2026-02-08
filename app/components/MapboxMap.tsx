@@ -217,10 +217,11 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
       const mapMarker = new maplibregl.Marker({
         element: marker,
         anchor: "bottom",
-      })
-        .setLngLat(plot.center)
-        .addTo(mapRef.current);
-      markerRef.current.push(mapMarker);
+      }).setLngLat(plot.center);
+      if (mapRef.current) {
+        mapMarker.addTo(mapRef.current);
+        markerRef.current.push(mapMarker);
+      }
     });
   }, [geojson, plots, visiblePlots]);
 
