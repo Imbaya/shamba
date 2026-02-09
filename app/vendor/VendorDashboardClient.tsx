@@ -6,12 +6,15 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import {
   addDoc,
+  arrayRemove,
   arrayUnion,
   collection,
   deleteDoc,
+  deleteField,
   doc,
   getDoc,
   getDocs,
+  onSnapshot,
   orderBy,
   query,
   serverTimestamp,
@@ -277,6 +280,7 @@ export default function VendorDashboard() {
   const [vendorId, setVendorId] = useState<string | null>(null);
   const [portalId, setPortalId] = useState<string | null>(null);
   const [hydrated, setHydrated] = useState(false);
+  const [userLoaded, setUserLoaded] = useState(false);
   const [memberPermissions, setMemberPermissions] =
     useState<MemberPermissions>({});
   const [isPortalAdmin, setIsPortalAdmin] = useState(false);
@@ -301,6 +305,10 @@ export default function VendorDashboard() {
   });
   const [memberSaving, setMemberSaving] = useState(false);
   const [memberError, setMemberError] = useState<string | null>(null);
+  const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
+  const [editingRole, setEditingRole] = useState<"admin" | "member">("member");
+  const [editingPerms, setEditingPerms] = useState<MemberPermissions>({});
+  const [memberUpdating, setMemberUpdating] = useState(false);
   const [searchVisible, setSearchVisible] = useState({
     active: false,
     drafts: false,
@@ -348,6 +356,7 @@ export default function VendorDashboard() {
         setVendorProfile(null);
         setUserName(null);
         setVendorId(null);
+        setUserLoaded(true);
         return;
       }
       setVendorId(user.uid);
@@ -366,66 +375,66 @@ export default function VendorDashboard() {
           user.displayName || user.email?.split("@")[0] || "User"
         );
       }
+      setUserLoaded(true);
     });
     return () => unsubscribe();
   }, []);
 
   useEffect(() => {
-    const loadPortalProfile = async () => {
-      if (!portalId || !vendorId) return;
-      const snap = await getDoc(doc(db, "vendorPortals", portalId));
-      if (snap.exists()) {
-        const data = snap.data() as {
-          name?: string;
-          type?: "company" | "individual";
-          location?: string;
-          members?: Record<
-            string,
-            { role?: string; permissions?: MemberPermissions }
-          >;
-          memberIds?: string[];
-        };
-        setVendorProfile({
-          name: data.name || "Portal",
-          type: data.type === "company" ? "Company" : "Individual",
-          location: data.location || "Location not set",
-        });
-        const member = data.members?.[vendorId];
-        const permissions = member?.permissions ?? {};
-        const adminFlag = member?.role === "admin" || permissions.admin === true;
-        setIsPortalAdmin(adminFlag);
-        setMemberPermissions({ ...permissions, admin: adminFlag });
-        if (!member) {
-          setAccessDenied("Access denied. Contact admin for addition.");
-        }
-        const memberIds = data.memberIds ?? Object.keys(data.members ?? {});
-        if (memberIds.length) {
-          const usersSnap = await getDocs(
-            query(collection(db, "users"), where("__name__", "in", memberIds))
-          );
-          const userMap = new Map<string, { name?: string; email?: string }>();
-          usersSnap.forEach((docSnap) => {
-            const u = docSnap.data() as { name?: string; email?: string };
-            userMap.set(docSnap.id, u);
-          });
-          const nextMembers = memberIds.map((id) => {
-            const memberData = data.members?.[id];
-            const user = userMap.get(id);
-            return {
-              id,
-              name: user?.name || "Member",
-              email: user?.email || "",
-              role: (memberData?.role as "admin" | "member") ?? "member",
-              permissions: memberData?.permissions ?? {},
-            };
-          });
-          setPortalMembers(nextMembers);
-        } else {
-          setPortalMembers([]);
-        }
+    if (!portalId || !vendorId) return;
+    const portalRef = doc(db, "vendorPortals", portalId);
+    const unsubscribe = onSnapshot(portalRef, async (snap) => {
+      if (!snap.exists()) return;
+      const data = snap.data() as {
+        name?: string;
+        type?: "company" | "individual";
+        location?: string;
+        members?: Record<
+          string,
+          { role?: string; permissions?: MemberPermissions }
+        >;
+        memberIds?: string[];
+      };
+      setVendorProfile({
+        name: data.name || "Portal",
+        type: data.type === "company" ? "Company" : "Individual",
+        location: data.location || "Location not set",
+      });
+      const member = data.members?.[vendorId];
+      const permissions = member?.permissions ?? {};
+      const adminFlag = member?.role === "admin" || permissions.admin === true;
+      setIsPortalAdmin(adminFlag);
+      setMemberPermissions({ ...permissions, admin: adminFlag });
+      if (!member) {
+        setAccessDenied("Access denied. Contact admin for addition.");
       }
-    };
-    loadPortalProfile();
+      const memberIds = data.memberIds ?? Object.keys(data.members ?? {});
+      if (memberIds.length) {
+        const usersSnap = await getDocs(
+          query(collection(db, "users"), where("__name__", "in", memberIds))
+        );
+        const userMap = new Map<string, { name?: string; email?: string }>();
+        usersSnap.forEach((docSnap) => {
+          const u = docSnap.data() as { name?: string; email?: string };
+          userMap.set(docSnap.id, u);
+        });
+        const nextMembers = memberIds.map((id) => {
+          const memberData = data.members?.[id];
+          const user = userMap.get(id);
+          return {
+            id,
+            name: user?.name || "Member",
+            email: user?.email || "",
+            role: (memberData?.role as "admin" | "member") ?? "member",
+            permissions: memberData?.permissions ?? {},
+          };
+        });
+        setPortalMembers(nextMembers);
+      } else {
+        setPortalMembers([]);
+      }
+    });
+    return () => unsubscribe();
   }, [portalId, vendorId]);
 
   useEffect(() => {
@@ -484,6 +493,7 @@ export default function VendorDashboard() {
     if (tabId === "inquiries") return canViewInquiries;
     if (tabId === "leads") return canViewLeads;
     if (tabId === "active" || tabId === "drafts") return canCreateListings;
+    if (tabId === "pending" || tabId === "sales") return canAddSales;
     if (tabId === "members") return canManageMembers;
     return true;
   };
@@ -507,10 +517,37 @@ export default function VendorDashboard() {
 
   useEffect(() => {
     if (!canAccessTab(activeTab)) {
-      setActiveTab("sales");
+      setActiveTab("active");
       denyAccess("Access denied. Contact admin for addition.");
     }
-  }, [activeTab, canCreateListings, canViewInquiries, canViewLeads, canManageMembers]);
+  }, [activeTab, canCreateListings, canViewInquiries, canViewLeads, canManageMembers, canAddSales]);
+
+  const loadingView = (
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_#f9f1e6,_#f2ede4_55%,_#efe7d8)] text-[#14110f]">
+      <div className="mx-auto flex min-h-screen max-w-6xl flex-col items-center justify-center px-4 py-10 sm:px-6">
+        <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-[#1f3d2d] text-xl font-semibold text-[#f4f1ea] shadow-[0_18px_50px_-30px_rgba(20,17,15,0.6)]">
+          PT
+        </div>
+        <div className="mt-6 text-center">
+          <p className="text-xs uppercase tracking-[0.35em] text-[#c77d4b]">
+            Vendor workspace
+          </p>
+          <h1 className="mt-2 font-serif text-2xl text-[#14110f] sm:text-3xl">
+            Loading your portal
+          </h1>
+          <p className="mt-2 text-sm text-[#5a4a44]">
+            Preparing your listings, members, and sales.
+          </p>
+        </div>
+        <div className="mt-6 flex items-center gap-3">
+          <div className="h-10 w-10 animate-spin rounded-full border-2 border-[#d8c7b6] border-t-[#1f3d2d]" />
+          <div className="text-xs text-[#7a5f54]">
+            Syncing workspace data
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 
   const addMemberByEmail = async () => {
     if (!portalId || !vendorId) return;
@@ -591,6 +628,85 @@ export default function VendorDashboard() {
       setMemberError("Unable to add member. Try again.");
     } finally {
       setMemberSaving(false);
+    }
+  };
+
+  const removeMember = async (memberId: string) => {
+    if (!portalId) return;
+    if (!canManageMembers) {
+      denyAccess("Access denied. Contact admin for addition.");
+      return;
+    }
+    if (!window.confirm("Remove this member from the portal?")) return;
+    try {
+      await updateDoc(doc(db, "vendorPortals", portalId), {
+        memberIds: arrayRemove(memberId),
+        [`members.${memberId}`]: deleteField(),
+      });
+      setPortalMembers((current) =>
+        current.filter((member) => member.id !== memberId)
+      );
+    } catch {
+      setAccessDenied("Unable to remove member. Try again.");
+    }
+  };
+
+  const startEditMember = (member: {
+    id: string;
+    role: "admin" | "member";
+    permissions: MemberPermissions;
+  }) => {
+    setEditingMemberId(member.id);
+    setEditingRole(member.role);
+    setEditingPerms({ ...member.permissions });
+  };
+
+  const saveMemberPermissions = async () => {
+    if (!portalId || !editingMemberId) return;
+    if (!canManageMembers) {
+      denyAccess("Access denied. Contact admin for addition.");
+      return;
+    }
+    setMemberUpdating(true);
+    try {
+      const normalizedPerms =
+        editingRole === "admin"
+          ? {
+              admin: true,
+              create_listings: true,
+              add_sales: true,
+              view_inquiries: true,
+              view_leads: true,
+              manage_members: true,
+            }
+          : {
+              admin: false,
+              create_listings: !!editingPerms.create_listings,
+              add_sales: !!editingPerms.add_sales,
+              view_inquiries: !!editingPerms.view_inquiries,
+              view_leads: !!editingPerms.view_leads,
+              manage_members: !!editingPerms.manage_members,
+            };
+      await updateDoc(doc(db, "vendorPortals", portalId), {
+        [`members.${editingMemberId}.role`]: editingRole,
+        [`members.${editingMemberId}.permissions`]: normalizedPerms,
+      });
+      setPortalMembers((current) =>
+        current.map((member) =>
+          member.id === editingMemberId
+            ? {
+                ...member,
+                role: editingRole,
+                permissions: normalizedPerms,
+              }
+            : member
+        )
+      );
+      setEditingMemberId(null);
+    } catch {
+      setAccessDenied("Unable to update member. Try again.");
+    } finally {
+      setMemberUpdating(false);
     }
   };
 
@@ -807,7 +923,7 @@ export default function VendorDashboard() {
   };
 
   const earthRadius = 6371000;
-  const minGpsAccuracyMeters = 3;
+  const minGpsAccuracyMeters = 8;
   const strideLengthMeters = 0.76;
   const anchorAverageWindowMs = 5000;
 
@@ -1514,7 +1630,8 @@ export default function VendorDashboard() {
       return;
     }
     setLocationStatus("Locking anchor point (averaging 5s)...");
-    navigator.geolocation.getCurrentPosition(
+    const samples: { lat: number; lng: number }[] = [];
+    const watchId = navigator.geolocation.watchPosition(
       (pos) => {
         const accuracy = pos.coords.accuracy ?? 0;
         if (accuracy > minGpsAccuracyMeters) {
@@ -1525,37 +1642,73 @@ export default function VendorDashboard() {
           );
           return;
         }
-        const anchorPoint = {
+        samples.push({
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
-        };
-        anchorSamplesRef.current[parcelId] = {
-          start: Date.now(),
-          samples: [anchorPoint],
-        };
+        });
         setSubParcels((current) =>
           current.map((item) =>
-                item.id === parcelId
-                  ? {
-                      ...item,
-                      gpsAccuracy: accuracy,
-                      signalStrength: calcSignalStrength(accuracy),
-                      waitingForFix: false,
-                      hasGoodFix: false,
-                      anchorPoint: null,
-                      anchorLocked: false,
-                      anchorLocking: true,
-                    }
-                  : item
-              )
+            item.id === parcelId
+              ? {
+                  ...item,
+                  gpsAccuracy: accuracy,
+                  signalStrength: calcSignalStrength(accuracy),
+                  waitingForFix: false,
+                  hasGoodFix: false,
+                  anchorPoint: null,
+                  anchorLocked: false,
+                  anchorLocking: true,
+                }
+              : item
+          )
         );
-        setLocationStatus("Anchor averaging... keep still for 5s.");
       },
       () => {
         setLocationStatus("Unable to lock anchor. Check permissions.");
       },
-      { enableHighAccuracy: true, timeout: 10000 }
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
     );
+    setLocationStatus("Anchor averaging... keep still for 5s.");
+    window.setTimeout(() => {
+      navigator.geolocation.clearWatch(watchId);
+      if (!samples.length) {
+        setLocationStatus("No reliable fix yet. Try again.");
+        return;
+      }
+      const avg = samples.reduce(
+        (acc, point) => ({
+          lat: acc.lat + point.lat,
+          lng: acc.lng + point.lng,
+        }),
+        { lat: 0, lng: 0 }
+      );
+      const anchorPoint = {
+        lat: avg.lat / samples.length,
+        lng: avg.lng / samples.length,
+      };
+      kalmanStateRef.current[parcelId] = {
+        lat: { x: anchorPoint.lat, p: 1 },
+        lng: { x: anchorPoint.lng, p: 1 },
+      };
+      stepsUsedRef.current[parcelId] = stepsRef.current;
+      setSubParcels((current) =>
+        current.map((item) =>
+          item.id === parcelId
+            ? {
+                ...item,
+                anchorPoint,
+                anchorLocked: true,
+                rawPath: [anchorPoint],
+                cleanPath: [anchorPoint],
+                waitingForFix: false,
+                hasGoodFix: true,
+                anchorLocking: false,
+              }
+            : item
+        )
+      );
+      setLocationStatus("Anchor locked.");
+    }, anchorAverageWindowMs);
   };
 
   const parsePrice = (price: string) => {
@@ -2089,7 +2242,7 @@ export default function VendorDashboard() {
     return true;
   };
 
-  return (
+  return userLoaded ? (
     <div className="min-h-screen overflow-x-hidden bg-[radial-gradient(circle_at_top,_#f9f1e6,_#f2ede4_55%,_#efe7d8)] text-[#14110f]">
       <header className="mx-auto flex max-w-6xl flex-col gap-4 px-4 py-4 sm:px-6 md:flex-row md:items-center md:justify-between">
         <div className="text-left">
@@ -2105,6 +2258,14 @@ export default function VendorDashboard() {
         </div>
         <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
           <button
+            type="button"
+            onClick={() => handleTabChange("members")}
+            disabled={!canManageMembers}
+            className="rounded-full border border-[#eadfce] px-4 py-2 text-[#5a4a44] transition hover:border-[#c9b8a6] disabled:opacity-60 lg:hidden"
+          >
+            Members
+          </button>
+          <button
             className="rounded-full border border-[#1f3d2d]/30 px-4 py-2 text-[#1f3d2d] transition hover:border-[#1f3d2d]"
             onClick={() => {
               if (!canViewLeads) {
@@ -2115,17 +2276,22 @@ export default function VendorDashboard() {
           >
             Export leads
           </button>
+          {canCreateListings && (
+            <button
+              className="rounded-full bg-[#1f3d2d] px-5 py-2 text-[#f7f3ea] transition hover:bg-[#173124]"
+              onClick={() => setNewListingOpen(true)}
+            >
+              New listing
+            </button>
+          )}
           <button
-            className="rounded-full bg-[#1f3d2d] px-5 py-2 text-[#f7f3ea] transition hover:bg-[#173124]"
+            type="button"
             onClick={() => {
-              if (!canCreateListings) {
-                denyAccess("Access denied. Contact admin for addition.");
-                return;
-              }
-              setNewListingOpen(true);
+              window.location.href = "/portal";
             }}
+            className="rounded-full border border-[#eadfce] px-4 py-2 text-[#5a4a44] transition hover:border-[#c9b8a6]"
           >
-            New listing
+            Back to portals
           </button>
           <button
             type="button"
@@ -2937,7 +3103,7 @@ export default function VendorDashboard() {
                         ? `${member.name} ${member.email}`
                             .toLowerCase()
                             .includes(searchText.members.toLowerCase())
-                        : true
+                      : true
                     )
                     .map((member) => (
                       <div
@@ -2955,37 +3121,135 @@ export default function VendorDashboard() {
                             {member.email || "Email not set"}
                           </p>
                         </div>
-                        <div className="flex flex-wrap gap-2 text-[10px] text-[#5a4a44]">
-                          {member.role === "admin" ? (
-                            <span className="rounded-full border border-[#eadfce] bg-white px-2 py-1">
-                              Full access
-                            </span>
+                        <div className="flex flex-wrap items-center gap-2">
+                          {editingMemberId === member.id ? (
+                            <div className="space-y-2">
+                              <div className="flex flex-wrap items-center gap-2 text-[10px] text-[#5a4a44]">
+                                <label className="flex items-center gap-2">
+                                  <span>Role</span>
+                                  <select
+                                    value={editingRole}
+                                    onChange={(event) =>
+                                      setEditingRole(
+                                        event.target.value as "admin" | "member"
+                                      )
+                                    }
+                                    className="rounded-full border border-[#eadfce] bg-white px-2 py-1 text-[10px] text-[#5a4a44]"
+                                  >
+                                    <option value="member">Member</option>
+                                    <option value="admin">Admin</option>
+                                  </select>
+                                </label>
+                              </div>
+                              <div className="flex flex-wrap gap-2 text-[10px] text-[#5a4a44]">
+                                {[
+                                  { key: "create_listings", label: "Listings" },
+                                  { key: "add_sales", label: "Sales" },
+                                  { key: "view_inquiries", label: "Inquiries" },
+                                  { key: "view_leads", label: "Leads" },
+                                  { key: "manage_members", label: "Members" },
+                                ].map((item) => (
+                                  <label
+                                    key={item.key}
+                                    className={`flex items-center gap-2 ${
+                                      editingRole === "admin"
+                                        ? "opacity-60"
+                                        : ""
+                                    }`}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={
+                                        editingRole === "admin"
+                                          ? true
+                                          : Boolean(
+                                              (editingPerms as any)[item.key]
+                                            )
+                                      }
+                                      onChange={(event) =>
+                                        setEditingPerms((current) => ({
+                                          ...current,
+                                          [item.key]: event.target.checked,
+                                        }))
+                                      }
+                                      disabled={editingRole === "admin"}
+                                    />
+                                    {item.label}
+                                  </label>
+                                ))}
+                              </div>
+                              <div className="flex flex-wrap gap-2">
+                                <button
+                                  type="button"
+                                  onClick={saveMemberPermissions}
+                                  disabled={memberUpdating}
+                                  className="rounded-full bg-[#1f3d2d] px-3 py-1 text-[10px] font-semibold text-white disabled:opacity-60"
+                                >
+                                  {memberUpdating ? "Saving..." : "Save"}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setEditingMemberId(null)}
+                                  className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#5a4a44]"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
                           ) : (
                             <>
-                              {member.permissions.create_listings && (
-                                <span className="rounded-full border border-[#eadfce] bg-white px-2 py-1">
-                                  Listings
-                                </span>
-                              )}
-                              {member.permissions.add_sales && (
-                                <span className="rounded-full border border-[#eadfce] bg-white px-2 py-1">
-                                  Sales
-                                </span>
-                              )}
-                              {member.permissions.view_inquiries && (
-                                <span className="rounded-full border border-[#eadfce] bg-white px-2 py-1">
-                                  Inquiries
-                                </span>
-                              )}
-                              {member.permissions.view_leads && (
-                                <span className="rounded-full border border-[#eadfce] bg-white px-2 py-1">
-                                  Leads
-                                </span>
-                              )}
-                              {member.permissions.manage_members && (
-                                <span className="rounded-full border border-[#eadfce] bg-white px-2 py-1">
-                                  Members
-                                </span>
+                              <div className="flex flex-wrap gap-2 text-[10px] text-[#5a4a44]">
+                                {member.role === "admin" ? (
+                                  <span className="rounded-full border border-[#eadfce] bg-white px-2 py-1">
+                                    Full access
+                                  </span>
+                                ) : (
+                                  <>
+                                    {member.permissions.create_listings && (
+                                      <span className="rounded-full border border-[#eadfce] bg-white px-2 py-1">
+                                        Listings
+                                      </span>
+                                    )}
+                                    {member.permissions.add_sales && (
+                                      <span className="rounded-full border border-[#eadfce] bg-white px-2 py-1">
+                                        Sales
+                                      </span>
+                                    )}
+                                    {member.permissions.view_inquiries && (
+                                      <span className="rounded-full border border-[#eadfce] bg-white px-2 py-1">
+                                        Inquiries
+                                      </span>
+                                    )}
+                                    {member.permissions.view_leads && (
+                                      <span className="rounded-full border border-[#eadfce] bg-white px-2 py-1">
+                                        Leads
+                                      </span>
+                                    )}
+                                    {member.permissions.manage_members && (
+                                      <span className="rounded-full border border-[#eadfce] bg-white px-2 py-1">
+                                        Members
+                                      </span>
+                                    )}
+                                  </>
+                                )}
+                              </div>
+                              {canManageMembers && member.id !== vendorId && (
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={() => startEditMember(member)}
+                                    className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#5a4a44] hover:border-[#c9b8a6]"
+                                  >
+                                    Edit
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => removeMember(member.id)}
+                                    className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#7a5f54] hover:border-[#c9b8a6]"
+                                  >
+                                    Remove
+                                  </button>
+                                </div>
                               )}
                             </>
                           )}
@@ -4730,5 +4994,7 @@ export default function VendorDashboard() {
         </div>
       )}
     </div>
+  ) : (
+    loadingView
   );
 }
