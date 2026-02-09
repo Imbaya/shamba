@@ -3,10 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import MapboxMap, { type Plot } from "./components/MapboxMap";
-import { auth, db, storage } from "../lib/firebase";
+import { auth, db } from "../lib/firebase";
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from "firebase/auth";
 import { collection, doc, getDocs, serverTimestamp, setDoc } from "firebase/firestore";
-import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 
 export default function Home() {
   const router = useRouter();
@@ -111,15 +110,9 @@ export default function Home() {
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [signupOpen, setSignupOpen] = useState(false);
   const [loginOpen, setLoginOpen] = useState(false);
-  const [signupVendorType, setSignupVendorType] = useState<
-    "Individual" | "Company"
-  >("Individual");
   const [vendorName, setVendorName] = useState("");
   const [vendorEmail, setVendorEmail] = useState("");
   const [vendorPhone, setVendorPhone] = useState("");
-  const [companyName, setCompanyName] = useState("");
-  const [companyReg, setCompanyReg] = useState("");
-  const [companyRegFile, setCompanyRegFile] = useState<File | null>(null);
   const [signupPassword, setSignupPassword] = useState("");
   const [signupConfirm, setSignupConfirm] = useState("");
   const [loginEmail, setLoginEmail] = useState("");
@@ -154,12 +147,8 @@ export default function Home() {
       setAuthError("Passwords do not match.");
       return;
     }
-    if (signupVendorType === "Individual" && !vendorName) {
+    if (!vendorName) {
       setAuthError("Full name is required.");
-      return;
-    }
-    if (signupVendorType === "Company" && !companyName) {
-      setAuthError("Company name is required.");
       return;
     }
     setAuthLoading(true);
@@ -170,26 +159,15 @@ export default function Home() {
         signupPassword
       );
       const userId = credential.user.uid;
-      let registrationDocUrl = "";
-      if (signupVendorType === "Company" && companyRegFile) {
-        const fileRef = ref(
-          storage,
-          `vendor_docs/${userId}/company-registration-${companyRegFile.name}`
-        );
-        await uploadBytes(fileRef, companyRegFile);
-        registrationDocUrl = await getDownloadURL(fileRef);
-      }
-      await setDoc(doc(db, "vendors", userId), {
-        type: signupVendorType,
-        name: signupVendorType === "Individual" ? vendorName : companyName,
+      await setDoc(doc(db, "users", userId), {
+        name: vendorName,
         email: vendorEmail,
+        emailLower: vendorEmail.toLowerCase(),
         phone: vendorPhone,
-        companyRegNumber: signupVendorType === "Company" ? companyReg : "",
-        registrationDocUrl,
         createdAt: serverTimestamp(),
       });
       setSignupOpen(false);
-      router.push("/vendor");
+      router.push("/portal");
     } catch (error) {
       setAuthError("Signup failed. Check your details and try again.");
     } finally {
@@ -207,7 +185,7 @@ export default function Home() {
     try {
       await signInWithEmailAndPassword(auth, loginEmail, loginPassword);
       setLoginOpen(false);
-      router.push("/vendor");
+      router.push("/portal");
     } catch (error) {
       setAuthError("Login failed. Check your credentials.");
     } finally {
@@ -552,125 +530,45 @@ export default function Home() {
             </div>
 
             <div className="mt-5 space-y-4 text-xs">
-              <div>
-                <label className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
-                  I am registering as
-                </label>
-                <div className="mt-2 flex gap-2">
-                  {["Individual", "Company"].map((type) => (
-                    <button
-                      key={type}
-                      type="button"
-                      onClick={() =>
-                        setSignupVendorType(type as "Individual" | "Company")
-                      }
-                      className={`rounded-full px-3 py-2 text-xs transition ${
-                        signupVendorType === type
-                          ? "bg-[#1f3d2d] text-white"
-                          : "border border-[#eadfce] bg-white text-[#5a4a44]"
-                      }`}
-                    >
-                      {type}
-                    </button>
-                  ))}
-                </div>
+              <div className="grid gap-3">
+                <input
+                  type="text"
+                  value={vendorName ?? ""}
+                  onChange={(event) => setVendorName(event.target.value)}
+                  placeholder="Full name"
+                  className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                />
+                <input
+                  type="email"
+                  value={vendorEmail ?? ""}
+                  onChange={(event) => setVendorEmail(event.target.value)}
+                  placeholder="Email"
+                  className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                />
+                <input
+                  type="tel"
+                  value={vendorPhone ?? ""}
+                  onChange={(event) =>
+                    setVendorPhone(event.target.value ?? "")
+                  }
+                  placeholder="Phone number"
+                  className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                />
+                <input
+                  type="password"
+                  value={signupPassword}
+                  onChange={(event) => setSignupPassword(event.target.value)}
+                  placeholder="Password"
+                  className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                />
+                <input
+                  type="password"
+                  value={signupConfirm}
+                  onChange={(event) => setSignupConfirm(event.target.value)}
+                  placeholder="Confirm password"
+                  className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                />
               </div>
-              {signupVendorType === "Individual" ? (
-                <div className="grid gap-3">
-                  <input
-                    type="text"
-                    value={vendorName ?? ""}
-                    onChange={(event) => setVendorName(event.target.value)}
-                    placeholder="Full name"
-                    className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
-                  />
-                  <input
-                    type="email"
-                    value={vendorEmail ?? ""}
-                    onChange={(event) => setVendorEmail(event.target.value)}
-                    placeholder="Email"
-                    className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
-                  />
-                  <input
-                    type="tel"
-                    value={vendorPhone ?? ""}
-                    onChange={(event) =>
-                      setVendorPhone(event.target.value ?? "")
-                    }
-                    placeholder="Phone number"
-                    className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
-                  />
-                  <input
-                    type="password"
-                    value={signupPassword}
-                    onChange={(event) => setSignupPassword(event.target.value)}
-                    placeholder="Password"
-                    className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
-                  />
-                  <input
-                    type="password"
-                    value={signupConfirm}
-                    onChange={(event) => setSignupConfirm(event.target.value)}
-                    placeholder="Confirm password"
-                    className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
-                  />
-                </div>
-              ) : (
-                <div className="grid gap-3">
-                  <input
-                    type="text"
-                    value={companyName ?? ""}
-                    onChange={(event) => setCompanyName(event.target.value)}
-                    placeholder="Company name"
-                    className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
-                  />
-                  <input
-                    type="text"
-                    value={companyReg ?? ""}
-                    onChange={(event) => setCompanyReg(event.target.value)}
-                    placeholder="Registration number"
-                    className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
-                  />
-                  <input
-                    type="file"
-                    accept="application/pdf,image/*"
-                    onChange={(event) =>
-                      setCompanyRegFile(event.target.files?.[0] ?? null)
-                    }
-                    className="w-full text-xs text-[#5a4a44] file:mr-3 file:rounded-full file:border-0 file:bg-[#c77d4b] file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white"
-                  />
-                  <input
-                    type="email"
-                    value={vendorEmail ?? ""}
-                    onChange={(event) => setVendorEmail(event.target.value)}
-                    placeholder="Company email"
-                    className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
-                  />
-                  <input
-                    type="tel"
-                    value={vendorPhone ?? ""}
-                    onChange={(event) =>
-                      setVendorPhone(event.target.value ?? "")
-                    }
-                    placeholder="Company phone"
-                    className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
-                  />
-                  <input
-                    type="password"
-                    value={signupPassword}
-                    onChange={(event) => setSignupPassword(event.target.value)}
-                    placeholder="Password"
-                    className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
-                  />
-                  <input
-                    type="password"
-                    value={signupConfirm}
-                    onChange={(event) => setSignupConfirm(event.target.value)}
-                    placeholder="Confirm password"
-                    className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
-                  />
-                </div>
-              )}
             </div>
 
             {authError && (
