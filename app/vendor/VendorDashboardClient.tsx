@@ -228,6 +228,9 @@ export default function VendorDashboard() {
       samplingCorner?: boolean;
       cornerSampleCount?: number;
       cornerCountdown?: number;
+      cornerConfidences?: number[];
+      lastCornerConfidence?: number;
+      overallConfidence?: number;
     }[]
   >([
     {
@@ -247,6 +250,9 @@ export default function VendorDashboard() {
       samplingCorner: false,
       cornerSampleCount: 0,
       cornerCountdown: 0,
+      cornerConfidences: [],
+      lastCornerConfidence: 0,
+      overallConfidence: 0,
     },
   ]);
   const [locationStatus, setLocationStatus] = useState<string | null>(null);
@@ -291,6 +297,7 @@ export default function VendorDashboard() {
         start: number;
         samples: { lat: number; lng: number }[];
         watchId: number | null;
+        lastAccuracy?: number;
         timeoutId?: number;
       }
     >
@@ -1833,6 +1840,25 @@ export default function VendorDashboard() {
     };
   };
 
+  const computeCornerConfidence = (
+    averaged: { lat: number; lng: number },
+    samples: { lat: number; lng: number }[],
+    accuracy: number
+  ) => {
+    if (!samples.length) return 0;
+    const distances = samples.map((s) => distance(averaged, s));
+    const mean =
+      distances.reduce((sum, value) => sum + value, 0) / distances.length;
+    const variance =
+      distances.reduce((sum, value) => sum + (value - mean) ** 2, 0) /
+      distances.length;
+    const stdDev = Math.sqrt(variance);
+    const accuracyPenalty = Math.max(0, accuracy - minGpsAccuracyMeters) * 5;
+    const dispersionPenalty = stdDev * 20;
+    const raw = 100 - accuracyPenalty - dispersionPenalty;
+    return Math.max(0, Math.min(100, Math.round(raw)));
+  };
+
   const captureCorner = (parcelId: number) => {
     if (!navigator.geolocation) {
       setLocationStatus("GPS not supported on this device.");
@@ -1877,6 +1903,7 @@ export default function VendorDashboard() {
         const entry = cornerSampleRef.current[parcelId];
         if (entry) {
           entry.samples.push(sample);
+          entry.lastAccuracy = accuracy;
           setSubParcels((current) =>
             current.map((item) =>
               item.id === parcelId
@@ -1928,21 +1955,37 @@ export default function VendorDashboard() {
         );
         return;
       }
+      const lastAccuracy = entry.lastAccuracy ?? minGpsAccuracyMeters;
+      const cornerConfidence = computeCornerConfidence(
+        averaged,
+        entry.samples,
+        lastAccuracy
+      );
       setSubParcels((current) =>
-        current.map((item) =>
-          item.id === parcelId
-            ? {
-                ...item,
-                rawPath: [...item.rawPath, averaged],
-                cleanPath: [...item.cleanPath, averaged],
-                samplingCorner: false,
-                cornerSampleCount: 0,
-                cornerCountdown: 0,
-                waitingForFix: false,
-                hasGoodFix: true,
-              }
-            : item
-        )
+        current.map((item) => {
+          if (item.id !== parcelId) return item;
+          const allConfidences = [
+            ...(item.cornerConfidences ?? []),
+            cornerConfidence,
+          ];
+          const overall = Math.round(
+            allConfidences.reduce((sum, value) => sum + value, 0) /
+              allConfidences.length
+          );
+          return {
+            ...item,
+            rawPath: [...item.rawPath, averaged],
+            cleanPath: [...item.cleanPath, averaged],
+            samplingCorner: false,
+            cornerSampleCount: 0,
+            cornerCountdown: 0,
+            waitingForFix: false,
+            hasGoodFix: true,
+            lastCornerConfidence: cornerConfidence,
+            cornerConfidences: allConfidences,
+            overallConfidence: overall,
+          };
+        })
       );
       setLocationStatus("Corner captured.");
       delete cornerSampleRef.current[parcelId];
@@ -5059,6 +5102,35 @@ export default function VendorDashboard() {
                               ).toFixed(2)}{" "}
                               km (est.)
                             </span>
+                          </div>
+                          <div className="mt-3 rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-[10px] text-[#5a4a44]">
+                            <div className="flex items-center justify-between">
+                              <span>Confidence gauge</span>
+                              <span>
+                                {Math.round(parcel.overallConfidence ?? 0)}%
+                              </span>
+                            </div>
+                            <div className="mt-2 h-2 w-full rounded-full bg-[#eadfce]">
+                              <div
+                                className="h-2 rounded-full bg-[#1f3d2d]"
+                                style={{
+                                  width: `${Math.round(
+                                    parcel.overallConfidence ?? 0
+                                  )}%`,
+                                }}
+                              />
+                            </div>
+                            {parcel.lastCornerConfidence !== undefined && (
+                              <div className="mt-2 flex items-center justify-between text-[10px] text-[#7a5f54]">
+                                <span>
+                                  Last corner:{" "}
+                                  {Math.round(parcel.lastCornerConfidence)}%
+                                </span>
+                                <span>
+                                  Samples: {parcel.cornerConfidences?.length ?? 0}
+                                </span>
+                              </div>
+                            )}
                           </div>
                           <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[10px] text-[#7a5f54]">
                             <span>
