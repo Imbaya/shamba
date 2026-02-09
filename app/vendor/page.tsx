@@ -62,6 +62,7 @@ type Inquiry = {
   phone: string;
   preferredContact: "Call" | "Text" | "WhatsApp";
   message: string;
+  status?: "new" | "responded";
 };
 
 const inquiriesSeed: Inquiry[] = [];
@@ -85,6 +86,7 @@ type SaleInstallment = {
   method: "Cash" | "Bank transfer" | "Mobile money";
   proofName?: string;
   proofUrl?: string;
+  proofFile?: File | null;
 };
 
 type SalesRecord = {
@@ -99,7 +101,13 @@ type SalesRecord = {
   remainingBalance: number;
   installments: SaleInstallment[];
   soldOn: string;
-  agreementFile: string;
+  nextPaymentDate?: string;
+  attachments?: {
+    label: string;
+    name: string;
+    url?: string;
+  }[];
+  fullyPaid?: boolean;
 };
 
 const initialPendingSales: SalesRecord[] = [];
@@ -110,7 +118,7 @@ const initialSales: SalesRecord[] = [];
 export default function VendorDashboard() {
   const [newListingOpen, setNewListingOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<
-    "active" | "drafts" | "inquiries" | "pending" | "sales"
+    "active" | "drafts" | "inquiries" | "leads" | "pending" | "sales"
   >("active");
   const [plots, setPlots] = useState<VendorPlot[]>(initialPlots);
   const [soldListings, setSoldListings] = useState<SoldListing[]>(
@@ -161,8 +169,13 @@ export default function VendorDashboard() {
   const [saleType, setSaleType] = useState<"cash" | "installments">("cash");
   const [charges, setCharges] = useState<
     { id: number; label: string; amount: string; kind: "charge" | "expense" }[]
-  >([{ id: 1, label: "Processing fee", amount: "0", kind: "charge" }]);
+  >([]);
   const [installments, setInstallments] = useState<SaleInstallment[]>([]);
+  const [nextPaymentDate, setNextPaymentDate] = useState("");
+  const [saleAttachments, setSaleAttachments] = useState<
+    { id: number; label: string; file: File | null; name: string }[]
+  >([]);
+  const [documentsOpenId, setDocumentsOpenId] = useState<string | null>(null);
   const [vendorLogo, setVendorLogo] = useState<string | null>(null);
   const [listingParcel, setListingParcel] = useState("");
   const [listingSize, setListingSize] = useState("");
@@ -227,6 +240,22 @@ export default function VendorDashboard() {
     location?: string;
   } | null>(null);
   const [vendorId, setVendorId] = useState<string | null>(null);
+  const [searchVisible, setSearchVisible] = useState({
+    active: false,
+    drafts: false,
+    inquiries: false,
+    leads: false,
+    pending: false,
+    sales: false,
+  });
+  const [searchText, setSearchText] = useState({
+    active: "",
+    drafts: "",
+    inquiries: "",
+    leads: "",
+    pending: "",
+    sales: "",
+  });
   const mapTilerKey = process.env.NEXT_PUBLIC_MAPTILER_KEY;
   const mapPreviewStyleUrl = mapTilerKey
     ? `https://api.maptiler.com/maps/streets-v2/style.json?key=${mapTilerKey}`
@@ -301,8 +330,18 @@ export default function VendorDashboard() {
           acres?: string;
           price?: string;
           parcels?: { name?: string }[];
+          soldParcelIds?: number[];
+          availableParcels?: number;
         };
         const totalParcels = data.parcels?.length ?? 1;
+        const soldParcelIds = data.soldParcelIds ?? [];
+        const availableParcels =
+          typeof data.availableParcels === "number"
+            ? data.availableParcels
+            : Math.max(totalParcels - soldParcelIds.length, 0);
+        if (availableParcels <= 0) {
+          return;
+        }
         mapped.push({
           id: docSnap.id,
           name: data.name || "Untitled",
@@ -311,8 +350,8 @@ export default function VendorDashboard() {
           price: data.price || "Ksh 0",
           confidence: "—",
           totalParcels,
-          soldParcelIds: [],
-          availableParcels: totalParcels,
+          soldParcelIds,
+          availableParcels,
         });
       });
       setPlots(mapped);
@@ -344,13 +383,16 @@ export default function VendorDashboard() {
 
   useEffect(() => {
     const loadInquiries = async () => {
-      if (!vendorProfile?.name) return;
+      const vendorName = vendorProfile?.name;
+      if (!vendorId && !vendorName) return;
       let snapshot;
       try {
         snapshot = await getDocs(
           query(
             collection(db, "inquiries"),
-            where("vendorName", "==", vendorProfile.name),
+            vendorId
+              ? where("vendorId", "==", vendorId)
+              : where("vendorName", "==", vendorName),
             orderBy("createdAt", "desc")
           )
         );
@@ -358,7 +400,9 @@ export default function VendorDashboard() {
         snapshot = await getDocs(
           query(
             collection(db, "inquiries"),
-            where("vendorName", "==", vendorProfile.name)
+            vendorId
+              ? where("vendorId", "==", vendorId)
+              : where("vendorName", "==", vendorName)
           )
         );
       }
@@ -371,6 +415,7 @@ export default function VendorDashboard() {
           message?: string;
           plotLabel?: string;
           createdAt?: { toDate: () => Date };
+          status?: "new" | "responded";
         };
         const createdAt = data.createdAt?.toDate();
         items.push({
@@ -382,12 +427,13 @@ export default function VendorDashboard() {
           phone: data.buyerPhone || "",
           preferredContact: data.preferredContact || "Call",
           message: data.message || "",
+          status: data.status ?? "new",
         });
       });
       setInquiries(items);
     };
     loadInquiries();
-  }, [vendorProfile?.name]);
+  }, [vendorProfile?.name, vendorId]);
 
   const refreshDrafts = async (id: string) => {
     let snapshot;
@@ -971,6 +1017,14 @@ export default function VendorDashboard() {
     return `Ksh ${formattedWhole || "0"}${decimal}`;
   };
 
+  const parseKshInput = (value: string) =>
+    Number(value.replace(/[^0-9.]/g, "")) || 0;
+
+  const generateSaleId = () => {
+    const random = Math.floor(100000 + Math.random() * 900000);
+    return `SALE-${random}`;
+  };
+
   const totalPostedValue =
     plots.reduce((sum, plot) => {
       const totalParcels = plot.totalParcels ?? 1;
@@ -1012,10 +1066,11 @@ export default function VendorDashboard() {
         if (sale.id !== saleId) return sale;
         const nextInstallments = updater(sale.installments);
         const totalPaid = nextInstallments.reduce((sum, item) => {
-          const paid = Number(item.amount) || 0;
+          const paid = parseKshInput(item.amount);
           return sum + paid;
         }, 0);
         const remainingBalance = Math.max(sale.netToVendor - totalPaid, 0);
+        const fullyPaid = remainingBalance <= 0;
         if (activeVendorId) {
           setDoc(
             doc(db, "pendingSales", sale.id),
@@ -1023,6 +1078,7 @@ export default function VendorDashboard() {
               installments: nextInstallments,
               totalPaid,
               remainingBalance,
+              fullyPaid,
             },
             { merge: true }
           );
@@ -1032,31 +1088,44 @@ export default function VendorDashboard() {
           installments: nextInstallments,
           totalPaid,
           remainingBalance,
+          fullyPaid,
         };
       });
-
-      const toMove = updated.filter((sale) => sale.remainingBalance <= 0);
-      if (toMove.length > 0) {
-        setSalesRecords((prev) => [...toMove, ...prev]);
-        if (activeVendorId) {
-          toMove.forEach(async (sale) => {
-            await setDoc(doc(db, "sales", sale.id), {
-              vendorId: activeVendorId,
-              ...sale,
-              createdAt: serverTimestamp(),
-            });
-            await deleteDoc(doc(db, "pendingSales", sale.id));
-          });
-        }
-      }
-      return updated.filter((sale) => sale.remainingBalance > 0);
+      return updated;
     });
+  };
+
+  const closePendingSale = async (sale: SalesRecord) => {
+    const activeVendorId = getActiveVendorId();
+    setPendingSalesRecords((current) =>
+      current.filter((item) => item.id !== sale.id)
+    );
+    setSalesRecords((prev) => [
+      {
+        ...sale,
+        totalPaid: sale.netToVendor,
+        remainingBalance: 0,
+        fullyPaid: true,
+      },
+      ...prev,
+    ]);
+    if (activeVendorId) {
+      await setDoc(doc(db, "sales", sale.id), {
+        vendorId: activeVendorId,
+        ...sale,
+        totalPaid: sale.netToVendor,
+        remainingBalance: 0,
+        fullyPaid: true,
+        createdAt: serverTimestamp(),
+      });
+      await deleteDoc(doc(db, "pendingSales", sale.id));
+    }
   };
 
   const submitPendingInstallment = async (saleId: string) => {
     const draft = installmentDrafts[saleId];
     if (!draft) return;
-    const amount = Number(draft.amount) || 0;
+    const amount = parseKshInput(draft.amount);
     if (!amount || !draft.date) return;
     setInstallmentDrafts((current) => ({
       ...current,
@@ -1117,6 +1186,19 @@ export default function VendorDashboard() {
           : [...(plot.soldParcelIds ?? []), nextSold];
         const availableParcels = Math.max(totalParcels - updatedSold.length, 0);
 
+        const persistSale = async () => {
+          try {
+            await updateDoc(doc(db, "listings", plotId), {
+              soldParcelIds: updatedSold,
+              availableParcels,
+              updatedAt: serverTimestamp(),
+            });
+          } catch {
+            // Keep local state even if persistence fails.
+          }
+        };
+        persistSale();
+
         if (updatedSold.length >= totalParcels) {
           setSoldListings((sold) => [
             {
@@ -1156,19 +1238,21 @@ export default function VendorDashboard() {
       defaultPrice: plot.price,
     });
     setBuyerNameInput("");
-    setSalePriceInput(plot.price.replace(/[^0-9.]/g, ""));
-    setCharges([{ id: 1, label: "Processing fee", amount: "0", kind: "charge" }]);
+    setSalePriceInput(formatKshInput(plot.price));
+    setCharges([]);
     setInstallments([]);
     setSaleType("cash");
+    setNextPaymentDate("");
+    setSaleAttachments([]);
     setSaleModalOpen(true);
   };
 
-  const confirmSale = () => {
+  const confirmSale = async () => {
     if (!saleDraft) return;
     const activeVendorId = getActiveVendorId();
-    const salePrice = Number(salePriceInput) || 0;
+    const salePrice = parseKshInput(salePriceInput);
     const totalDeductions = charges.reduce((sum, charge) => {
-      const fee = Number(charge.amount) || 0;
+      const fee = parseKshInput(charge.amount);
       return sum + fee;
     }, 0);
     const netToVendor = Math.max(salePrice - totalDeductions, 0);
@@ -1182,17 +1266,95 @@ export default function VendorDashboard() {
               date: today,
               method: "Cash" as const,
               proofName: "",
+              proofFile: null,
             },
           ]
         : installments;
     const totalPaid = normalizedInstallments.reduce((sum, installment) => {
-      const paid = Number(installment.amount) || 0;
+      const paid = parseKshInput(installment.amount);
       return sum + paid;
     }, 0);
     const remainingBalance = Math.max(netToVendor - totalPaid, 0);
 
+    const saleId = generateSaleId();
+    let uploadedInstallments = normalizedInstallments.map((installment) => ({
+      ...installment,
+      proofFile: undefined,
+    }));
+    if (activeVendorId && normalizedInstallments.length) {
+      uploadedInstallments = await Promise.all(
+        normalizedInstallments.map(async (installment) => {
+          if (!installment.proofFile) {
+            return { ...installment, proofFile: undefined };
+          }
+          const fileRef = ref(
+            storage,
+            `vendors/${activeVendorId}/sales/${saleId}/installments/${installment.id}-${installment.proofFile.name}`
+          );
+          try {
+            await uploadBytes(fileRef, installment.proofFile);
+            const url = await getDownloadURL(fileRef);
+            return {
+              ...installment,
+              proofName: installment.proofFile.name,
+              proofUrl: url,
+              proofFile: undefined,
+            };
+          } catch {
+            return {
+              ...installment,
+              proofName: installment.proofFile.name,
+              proofFile: undefined,
+            };
+          }
+        })
+      );
+    }
+    let uploadedAttachments: {
+      label: string;
+      name: string;
+      url?: string;
+    }[] = [];
+    if (saleAttachments.length && activeVendorId) {
+      uploadedAttachments = await Promise.all(
+        saleAttachments.map(async (attachment) => {
+          if (!attachment.file) {
+            return {
+              label: attachment.label || "Attachment",
+              name: attachment.name,
+            };
+          }
+          const fileRef = ref(
+            storage,
+            `vendors/${activeVendorId}/sales/${saleId}-${attachment.file.name}`
+          );
+          try {
+            await uploadBytes(fileRef, attachment.file);
+            const url = await getDownloadURL(fileRef);
+            return {
+              label: attachment.label || attachment.file.name,
+              name: attachment.file.name,
+              url,
+            };
+          } catch {
+            return {
+              label: attachment.label || attachment.file.name,
+              name: attachment.file.name,
+            };
+          }
+        })
+      );
+    } else if (saleAttachments.length) {
+      uploadedAttachments = saleAttachments
+        .filter((attachment) => attachment.name)
+        .map((attachment) => ({
+          label: attachment.label || "Attachment",
+          name: attachment.name,
+        }));
+    }
+
     const newRecord: SalesRecord = {
-      id: `SALE-${Date.now().toString().slice(-4)}`,
+      id: saleId,
       parcelName: saleDraft.parcelName,
       parcelId: saleDraft.plotId,
       buyer: buyerNameInput || "Buyer",
@@ -1201,9 +1363,10 @@ export default function VendorDashboard() {
       netToVendor,
       totalPaid,
       remainingBalance,
-      installments: normalizedInstallments,
+      installments: uploadedInstallments,
       soldOn: "Sold today",
-      agreementFile: "",
+      nextPaymentDate: nextPaymentDate || undefined,
+      attachments: uploadedAttachments.length ? uploadedAttachments : undefined,
     };
     if (remainingBalance > 0) {
       setPendingSalesRecords((current) => [newRecord, ...current]);
@@ -1415,6 +1578,7 @@ export default function VendorDashboard() {
                 { id: "active", label: "Active listings" },
                 { id: "drafts", label: "Drafts" },
                 { id: "inquiries", label: "Inquiries" },
+                { id: "leads", label: "Leads" },
                 { id: "pending", label: "Pending sales" },
                 { id: "sales", label: "Sales" },
               ].map((tab) => (
@@ -1427,6 +1591,7 @@ export default function VendorDashboard() {
                         | "active"
                         | "drafts"
                         | "inquiries"
+                        | "leads"
                         | "pending"
                         | "sales"
                     )
@@ -1491,6 +1656,8 @@ export default function VendorDashboard() {
                     ? "Drafts"
                     : activeTab === "inquiries"
                     ? "Inquiries"
+                    : activeTab === "leads"
+                    ? "Leads"
                     : activeTab === "pending"
                     ? "Pending sales"
                     : "Sales"}
@@ -1502,6 +1669,8 @@ export default function VendorDashboard() {
                     ? "Draft listings"
                     : activeTab === "inquiries"
                     ? "Latest inquiries"
+                    : activeTab === "leads"
+                    ? "Responded leads"
                     : activeTab === "pending"
                     ? "Pending sales"
                     : "Sales records"}
@@ -1518,7 +1687,7 @@ export default function VendorDashboard() {
                   Total posted value
                 </p>
                 <p className="mt-2 text-sm font-semibold text-[#14110f]">
-                  ${totalPostedValue.toLocaleString()}
+                  Ksh {totalPostedValue.toLocaleString()}
                 </p>
               </div>
               <div>
@@ -1526,7 +1695,7 @@ export default function VendorDashboard() {
                   Existing value
                 </p>
                 <p className="mt-2 text-sm font-semibold text-[#14110f]">
-                  ${totalExistingValue.toLocaleString()}
+                  Ksh {totalExistingValue.toLocaleString()}
                 </p>
               </div>
               <div>
@@ -1534,7 +1703,7 @@ export default function VendorDashboard() {
                   Sold value
                 </p>
                 <p className="mt-2 text-sm font-semibold text-[#14110f]">
-                  ${totalSoldValue.toLocaleString()}
+                  Ksh {totalSoldValue.toLocaleString()}
                 </p>
               </div>
             </div>
@@ -1542,7 +1711,43 @@ export default function VendorDashboard() {
             {activeTab === "active" && (
               <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
                 <div className="order-2 space-y-3 text-sm lg:order-1">
-                  {plots.map((plot) => {
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        setSearchVisible((current) => ({
+                          ...current,
+                          active: !current.active,
+                        }))
+                      }
+                      className="rounded-full border border-[#eadfce] bg-white px-3 py-1 text-[11px] text-[#5a4a44]"
+                    >
+                      {searchVisible.active ? "Hide search" : "Search"}
+                    </button>
+                    {searchVisible.active && (
+                      <input
+                        type="text"
+                        value={searchText.active}
+                        onChange={(event) =>
+                          setSearchText((current) => ({
+                            ...current,
+                            active: event.target.value,
+                          }))
+                        }
+                        placeholder="Search listings..."
+                        className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-xs text-[#14110f] sm:w-64"
+                      />
+                    )}
+                  </div>
+                  {plots
+                    .filter((plot) =>
+                      searchText.active
+                        ? `${plot.id} ${plot.name} ${plot.acres} ${plot.price}`
+                            .toLowerCase()
+                            .includes(searchText.active.toLowerCase())
+                        : true
+                    )
+                    .map((plot) => {
                     const totalParcels = plot.totalParcels ?? 1;
                     const soldParcels = plot.soldParcelIds?.length ?? 0;
                     const availableParcels =
@@ -1678,7 +1883,43 @@ export default function VendorDashboard() {
 
             {activeTab === "drafts" && (
               <div className="mt-5 space-y-3 text-sm">
-                {draftListings.map((draft) => (
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSearchVisible((current) => ({
+                        ...current,
+                        drafts: !current.drafts,
+                      }))
+                    }
+                    className="rounded-full border border-[#eadfce] bg-white px-3 py-1 text-[11px] text-[#5a4a44]"
+                  >
+                    {searchVisible.drafts ? "Hide search" : "Search"}
+                  </button>
+                  {searchVisible.drafts && (
+                    <input
+                      type="text"
+                      value={searchText.drafts}
+                      onChange={(event) =>
+                        setSearchText((current) => ({
+                          ...current,
+                          drafts: event.target.value,
+                        }))
+                      }
+                      placeholder="Search drafts..."
+                      className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-xs text-[#14110f] sm:w-64"
+                    />
+                  )}
+                </div>
+                {draftListings
+                  .filter((draft) =>
+                    searchText.drafts
+                      ? `${draft.id} ${draft.name} ${draft.acres} ${draft.price}`
+                          .toLowerCase()
+                          .includes(searchText.drafts.toLowerCase())
+                      : true
+                  )
+                  .map((draft) => (
                   <button
                     key={draft.id}
                     type="button"
@@ -1740,7 +1981,44 @@ export default function VendorDashboard() {
 
             {activeTab === "inquiries" && (
               <div className="mt-5 space-y-3 text-sm">
-                {inquiries.map((lead) => (
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSearchVisible((current) => ({
+                        ...current,
+                        inquiries: !current.inquiries,
+                      }))
+                    }
+                    className="rounded-full border border-[#eadfce] bg-white px-3 py-1 text-[11px] text-[#5a4a44]"
+                  >
+                    {searchVisible.inquiries ? "Hide search" : "Search"}
+                  </button>
+                  {searchVisible.inquiries && (
+                    <input
+                      type="text"
+                      value={searchText.inquiries}
+                      onChange={(event) =>
+                        setSearchText((current) => ({
+                          ...current,
+                          inquiries: event.target.value,
+                        }))
+                      }
+                      placeholder="Search inquiries..."
+                      className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-xs text-[#14110f] sm:w-64"
+                    />
+                  )}
+                </div>
+                {inquiries
+                  .filter((lead) =>
+                    searchText.inquiries
+                      ? `${lead.id} ${lead.buyer} ${lead.parcel} ${lead.phone}`
+                          .toLowerCase()
+                          .includes(searchText.inquiries.toLowerCase())
+                      : true
+                  )
+                  .filter((lead) => (lead.status ?? "new") !== "responded")
+                  .map((lead) => (
                   <button
                     key={lead.id}
                     type="button"
@@ -1792,6 +2070,26 @@ export default function VendorDashboard() {
                           <p className="rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-3 py-3 text-[11px] text-[#5a4a44]">
                             {inquiry.message}
                           </p>
+                          <button
+                            type="button"
+                            onClick={async () => {
+                              await updateDoc(
+                                doc(db, "inquiries", inquiry.id),
+                                { status: "responded" }
+                              );
+                              setInquiries((current) =>
+                                current.map((item) =>
+                                  item.id === inquiry.id
+                                    ? { ...item, status: "responded" }
+                                    : item
+                                )
+                              );
+                              setSelectedInquiryId(null);
+                            }}
+                            className="rounded-full bg-[#1f3d2d] px-3 py-2 text-[11px] font-semibold text-white"
+                          >
+                            Mark as responded
+                          </button>
                         </div>
                       );
                     })()
@@ -1804,9 +2102,127 @@ export default function VendorDashboard() {
               </div>
             )}
 
+            {activeTab === "leads" && (
+              <div className="mt-5 space-y-3 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSearchVisible((current) => ({
+                        ...current,
+                        leads: !current.leads,
+                      }))
+                    }
+                    className="rounded-full border border-[#eadfce] bg-white px-3 py-1 text-[11px] text-[#5a4a44]"
+                  >
+                    {searchVisible.leads ? "Hide search" : "Search"}
+                  </button>
+                  {searchVisible.leads && (
+                    <input
+                      type="text"
+                      value={searchText.leads}
+                      onChange={(event) =>
+                        setSearchText((current) => ({
+                          ...current,
+                          leads: event.target.value,
+                        }))
+                      }
+                      placeholder="Search leads..."
+                      className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-xs text-[#14110f] sm:w-64"
+                    />
+                  )}
+                </div>
+                {inquiries
+                  .filter((lead) =>
+                    (lead.status ?? "new") === "responded"
+                  )
+                  .filter((lead) =>
+                    searchText.leads
+                      ? `${lead.id} ${lead.buyer} ${lead.parcel} ${lead.phone}`
+                          .toLowerCase()
+                          .includes(searchText.leads.toLowerCase())
+                      : true
+                  )
+                  .map((lead) => (
+                    <div
+                      key={lead.id}
+                      className="flex w-full flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-4 py-3 text-left"
+                    >
+                      <div>
+                        <p className="text-xs uppercase tracking-[0.3em] text-[#a67047]">
+                          {lead.id}
+                        </p>
+                        <p className="mt-1 font-semibold text-[#14110f]">
+                          {lead.buyer}
+                        </p>
+                        <p className="mt-1 text-xs text-[#5a4a44]">
+                          {lead.parcel}
+                        </p>
+                        <p className="mt-1 text-[10px] text-[#7a6a63]">
+                          {lead.phone}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="rounded-full border border-[#eadfce] bg-white px-3 py-1 text-[10px] text-[#7a5f54]">
+                          Responded
+                        </span>
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            await deleteDoc(doc(db, "inquiries", lead.id));
+                            setInquiries((current) =>
+                              current.filter((item) => item.id !== lead.id)
+                            );
+                          }}
+                          className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#5a4a44]"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+              </div>
+            )}
+
             {activeTab === "pending" && (
               <div className="mt-5 space-y-3 text-sm">
-                {pendingSalesRecords.map((sale) => (
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSearchVisible((current) => ({
+                        ...current,
+                        pending: !current.pending,
+                      }))
+                    }
+                    className="rounded-full border border-[#eadfce] bg-white px-3 py-1 text-[11px] text-[#5a4a44]"
+                  >
+                    {searchVisible.pending ? "Hide search" : "Search"}
+                  </button>
+                  {searchVisible.pending && (
+                    <input
+                      type="text"
+                      value={searchText.pending}
+                      onChange={(event) =>
+                        setSearchText((current) => ({
+                          ...current,
+                          pending: event.target.value,
+                        }))
+                      }
+                      placeholder="Search pending sales..."
+                      className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-xs text-[#14110f] sm:w-64"
+                    />
+                  )}
+                </div>
+                {pendingSalesRecords
+                  .filter((sale) =>
+                    searchText.pending
+                      ? `${sale.id} ${sale.parcelName} ${sale.buyer}`
+                          .toLowerCase()
+                          .includes(searchText.pending.toLowerCase())
+                      : true
+                  )
+                  .map((sale) => (
                   <div
                     key={sale.id}
                     className="rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-4 py-3"
@@ -1825,21 +2241,36 @@ export default function VendorDashboard() {
                       </div>
                       <div className="text-right text-xs">
                         <p className="text-[#1f3d2d]">
-                          ${sale.salePrice.toLocaleString()}
+                          Ksh {sale.salePrice.toLocaleString()}
                         </p>
                         <p className="text-[#7a5f54]">{sale.soldOn}</p>
                       </div>
                     </div>
                     <div className="mt-3 grid gap-2 text-[11px] text-[#5a4a44] sm:grid-cols-3">
-                      <span>Net: ${sale.netToVendor.toLocaleString()}</span>
-                      <span>Paid: ${sale.totalPaid.toLocaleString()}</span>
+                      <span>Net: Ksh {sale.netToVendor.toLocaleString()}</span>
+                      <span>Paid: Ksh {sale.totalPaid.toLocaleString()}</span>
                       <span>
-                        Remaining: ${sale.remainingBalance.toLocaleString()}
+                        Remaining: Ksh {sale.remainingBalance.toLocaleString()}
                       </span>
                     </div>
+                    {(sale.fullyPaid || sale.remainingBalance <= 0) && (
+                      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-[11px] text-[#1f3d2d]">
+                        <span>
+                          Payments fully received. Close the sale to finalize.
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => closePendingSale(sale)}
+                          className="rounded-full bg-[#1f3d2d] px-3 py-1 text-[10px] font-semibold text-white"
+                        >
+                          Close sale
+                        </button>
+                      </div>
+                    )}
                     <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11px]">
                       <span className="text-[#7a5f54]">
-                        Remaining balance: ${sale.remainingBalance.toLocaleString()}
+                        Remaining balance: Ksh{" "}
+                        {sale.remainingBalance.toLocaleString()}
                       </span>
                       <button
                         type="button"
@@ -1899,7 +2330,7 @@ export default function VendorDashboard() {
                               <tr key={installment.id} className="border-t border-[#f0e5d6]">
                                 <td className="py-2 pr-3">
                                   Ksh{" "}
-                                  {Number(installment.amount || 0).toLocaleString()}
+                                  {parseKshInput(installment.amount).toLocaleString()}
                                 </td>
                                 <td className="py-2 pr-3">
                                   {installment.date || "—"}
@@ -1934,13 +2365,13 @@ export default function VendorDashboard() {
                         </p>
                         <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_140px_140px]">
                           <input
-                            type="number"
+                            type="text"
                             value={installmentDrafts[sale.id]?.amount ?? ""}
                             onChange={(event) =>
                               setInstallmentDrafts((current) => ({
                                 ...current,
                                 [sale.id]: {
-                                  amount: event.target.value,
+                                  amount: formatKshInput(event.target.value),
                                   date: current[sale.id]?.date ?? "",
                                   method:
                                     current[sale.id]?.method ?? "Mobile money",
@@ -1948,7 +2379,7 @@ export default function VendorDashboard() {
                                 },
                               }))
                             }
-                            placeholder="Amount paid"
+                            placeholder="Ksh 0"
                             className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
                           />
                           <input
@@ -2038,7 +2469,43 @@ export default function VendorDashboard() {
 
             {activeTab === "sales" && (
               <div className="mt-5 space-y-3 text-sm">
-                {salesRecords.map((sale) => (
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSearchVisible((current) => ({
+                        ...current,
+                        sales: !current.sales,
+                      }))
+                    }
+                    className="rounded-full border border-[#eadfce] bg-white px-3 py-1 text-[11px] text-[#5a4a44]"
+                  >
+                    {searchVisible.sales ? "Hide search" : "Search"}
+                  </button>
+                  {searchVisible.sales && (
+                    <input
+                      type="text"
+                      value={searchText.sales}
+                      onChange={(event) =>
+                        setSearchText((current) => ({
+                          ...current,
+                          sales: event.target.value,
+                        }))
+                      }
+                      placeholder="Search sales..."
+                      className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-xs text-[#14110f] sm:w-64"
+                    />
+                  )}
+                </div>
+                {salesRecords
+                  .filter((sale) =>
+                    searchText.sales
+                      ? `${sale.id} ${sale.parcelName} ${sale.buyer}`
+                          .toLowerCase()
+                          .includes(searchText.sales.toLowerCase())
+                      : true
+                  )
+                  .map((sale) => (
                   <div
                     key={sale.id}
                     className="rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-4 py-3"
@@ -2057,46 +2524,72 @@ export default function VendorDashboard() {
                       </div>
                       <div className="text-right text-xs">
                         <p className="text-[#1f3d2d]">
-                          ${sale.salePrice.toLocaleString()}
+                          Ksh {sale.salePrice.toLocaleString()}
                         </p>
                         <p className="text-[#7a5f54]">{sale.soldOn}</p>
                       </div>
                     </div>
                     <div className="mt-3 flex flex-wrap items-center justify-between text-[11px] text-[#5a4a44]">
-                      <span>Fee: ${sale.processingFee.toLocaleString()}</span>
-                      <span>Net: ${sale.netToVendor.toLocaleString()}</span>
+                      <span>Fee: Ksh {sale.processingFee.toLocaleString()}</span>
+                      <span>Net: Ksh {sale.netToVendor.toLocaleString()}</span>
                     </div>
                     <div className="mt-3 rounded-2xl border border-[#eadfce] bg-white px-3 py-3 text-[11px] text-[#5a4a44]">
-                      <p className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
-                        Signed agreement
-                      </p>
-                      <div className="mt-2 flex flex-wrap items-center gap-2">
-                        <input
-                          type="file"
-                          accept="application/pdf,image/*"
-                          onChange={(event) => {
-                            const file = event.target.files?.[0];
-                            if (!file) return;
-                            setSalesRecords((current) =>
-                              current.map((item) =>
-                                item.id === sale.id
-                                  ? { ...item, agreementFile: file.name }
-                                  : item
-                              )
-                            );
-                          }}
-                          className="text-xs text-[#5a4a44] file:mr-3 file:rounded-full file:border-0 file:bg-[#c77d4b] file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white"
-                        />
-                        {sale.agreementFile ? (
-                          <span className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#6b3e1e]">
-                            {sale.agreementFile}
-                          </span>
-                        ) : (
-                          <span className="text-[10px] text-[#7a6a63]">
-                            Upload signed advocate agreement
-                          </span>
-                        )}
+                      <div className="flex items-center justify-between gap-2">
+                        <div>
+                          <p className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                            Documents
+                          </p>
+                          <p className="mt-1 text-[10px] text-[#7a6a63]">
+                            View all uploaded sale documents.
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setDocumentsOpenId((current) =>
+                              current === sale.id ? null : sale.id
+                            )
+                          }
+                          className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#5a4a44]"
+                        >
+                          {documentsOpenId === sale.id ? "Hide" : "View"}
+                        </button>
                       </div>
+                      {documentsOpenId === sale.id && (
+                        <div className="mt-3 space-y-2">
+                          {sale.attachments && sale.attachments.length > 0 ? (
+                            sale.attachments.map((doc, idx) => (
+                              <div
+                                key={`${sale.id}-doc-${idx}`}
+                                className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-[#eadfce] px-3 py-2 text-[10px]"
+                              >
+                                <div>
+                                  <p className="font-semibold text-[#14110f]">
+                                    {doc.label || "Document"}
+                                  </p>
+                                  <p className="text-[#7a6a63]">{doc.name}</p>
+                                </div>
+                                {doc.url ? (
+                                  <a
+                                    href={doc.url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#1f3d2d]"
+                                  >
+                                    View
+                                  </a>
+                                ) : (
+                                  <span className="text-[#8a7a70]">—</span>
+                                )}
+                              </div>
+                            ))
+                          ) : (
+                            <p className="text-[10px] text-[#7a6a63]">
+                              No documents uploaded for this sale.
+                            </p>
+                          )}
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -2114,6 +2607,7 @@ export default function VendorDashboard() {
               { id: "active", label: "Active" },
               { id: "drafts", label: "Drafts" },
               { id: "inquiries", label: "Inquiries" },
+              { id: "leads", label: "Leads" },
               { id: "pending", label: "Pending" },
               { id: "sales", label: "Sales" },
             ].map((tab) => (
@@ -2126,6 +2620,7 @@ export default function VendorDashboard() {
                       | "active"
                       | "drafts"
                       | "inquiries"
+                      | "leads"
                       | "pending"
                       | "sales"
                   )
@@ -2164,28 +2659,30 @@ export default function VendorDashboard() {
             </div>
 
             <div className="mt-5 space-y-4 text-xs">
-              <div>
-                <label className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
-                  Buyer name
-                </label>
-                <input
-                  type="text"
-                  value={buyerNameInput}
-                  onChange={(event) => setBuyerNameInput(event.target.value)}
-                  placeholder="Buyer or company name"
-                  className="mt-2 w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
-                />
-              </div>
               <div className="grid gap-3 md:grid-cols-2">
+                <div>
+                  <label className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                    Buyer name
+                  </label>
+                  <input
+                    type="text"
+                    value={buyerNameInput}
+                    onChange={(event) => setBuyerNameInput(event.target.value)}
+                    placeholder="Buyer or company name"
+                    className="mt-2 w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                  />
+                </div>
                 <div>
                   <label className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
                     Selling price
                   </label>
                   <input
-                    type="number"
+                    type="text"
                     value={salePriceInput}
-                    onChange={(event) => setSalePriceInput(event.target.value)}
-                    placeholder="e.g. 48000"
+                    onChange={(event) =>
+                      setSalePriceInput(formatKshInput(event.target.value))
+                    }
+                    placeholder="e.g. Ksh 48,000"
                     className="mt-2 w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
                   />
                 </div>
@@ -2220,79 +2717,82 @@ export default function VendorDashboard() {
                 <label className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
                   Charges & expenses
                 </label>
-                <div className="mt-2 space-y-2">
-                  {charges.map((charge) => (
-                    <div
-                      key={charge.id}
-                      className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_110px_130px_auto]"
-                    >
-                      <input
-                        type="text"
-                        value={charge.label}
-                        onChange={(event) =>
-                          setCharges((current) =>
-                            current.map((item) =>
-                              item.id === charge.id
-                                ? { ...item, label: event.target.value }
-                                : item
-                            )
-                          )
-                        }
-                        placeholder="Charge name"
-                        className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
-                      />
-                      <input
-                        type="number"
-                        value={charge.amount}
-                        onChange={(event) =>
-                          setCharges((current) =>
-                            current.map((item) =>
-                              item.id === charge.id
-                                ? { ...item, amount: event.target.value }
-                                : item
-                            )
-                          )
-                        }
-                        placeholder="Amount"
-                        className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
-                      />
-                      <select
-                        value={charge.kind}
-                        onChange={(event) =>
-                          setCharges((current) =>
-                            current.map((item) =>
-                              item.id === charge.id
-                                ? {
-                                    ...item,
-                                    kind: event.target.value as
-                                      | "charge"
-                                      | "expense",
-                                  }
-                                : item
-                            )
-                          )
-                        }
-                        className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                {charges.length > 0 && (
+                  <div className="mt-2 space-y-2">
+                    {charges.map((charge) => (
+                      <div
+                        key={charge.id}
+                        className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_130px_140px_auto]"
                       >
-                        <option value="charge">Charge</option>
-                        <option value="expense">Expense</option>
-                      </select>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setCharges((current) =>
-                            current.length === 1
-                              ? current
-                              : current.filter((item) => item.id !== charge.id)
-                          )
-                        }
-                        className="rounded-full border border-[#eadfce] px-3 py-2 text-xs text-[#5a4a44]"
-                      >
-                        Remove
-                      </button>
-                    </div>
-                  ))}
-                </div>
+                        <input
+                          type="text"
+                          value={charge.label}
+                          onChange={(event) =>
+                            setCharges((current) =>
+                              current.map((item) =>
+                                item.id === charge.id
+                                  ? { ...item, label: event.target.value }
+                                  : item
+                              )
+                            )
+                          }
+                          placeholder="Charge name"
+                          className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                        />
+                        <input
+                          type="text"
+                          value={charge.amount}
+                          onChange={(event) =>
+                            setCharges((current) =>
+                              current.map((item) =>
+                                item.id === charge.id
+                                  ? {
+                                      ...item,
+                                      amount: formatKshInput(event.target.value),
+                                    }
+                                  : item
+                              )
+                            )
+                          }
+                          placeholder="Ksh 0"
+                          className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                        />
+                        <select
+                          value={charge.kind}
+                          onChange={(event) =>
+                            setCharges((current) =>
+                              current.map((item) =>
+                                item.id === charge.id
+                                  ? {
+                                      ...item,
+                                      kind: event.target.value as
+                                        | "charge"
+                                        | "expense",
+                                    }
+                                  : item
+                              )
+                            )
+                          }
+                          className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                        >
+                          <option value="charge">Charge</option>
+                          <option value="expense">Expense</option>
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setCharges((current) =>
+                              current.filter((item) => item.id !== charge.id)
+                            )
+                          }
+                          className="rounded-full border border-[#eadfce] px-3 py-2 text-xs text-[#5a4a44]"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
                 <button
                   type="button"
                   onClick={() =>
@@ -2304,6 +2804,95 @@ export default function VendorDashboard() {
                   className="mt-3 rounded-full border border-[#eadfce] px-3 py-2 text-xs text-[#5a4a44]"
                 >
                   Add item
+                </button>
+              </div>
+              <div className="rounded-2xl border border-[#eadfce] bg-white px-4 py-4">
+                <p className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                  Attachment
+                </p>
+                <div className="mt-3 space-y-2">
+                  {saleAttachments.map((attachment) => (
+                    <div
+                      key={attachment.id}
+                      className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_160px_auto]"
+                    >
+                      <input
+                        type="text"
+                        value={attachment.label}
+                        onChange={(event) =>
+                          setSaleAttachments((current) =>
+                            current.map((item) =>
+                              item.id === attachment.id
+                                ? { ...item, label: event.target.value }
+                                : item
+                            )
+                          )
+                        }
+                        placeholder="File label (e.g. Contract)"
+                        className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                      />
+                      <input
+                        type="file"
+                        accept="application/pdf,image/*"
+                        onChange={(event) => {
+                          const file = event.target.files?.[0] ?? null;
+                          setSaleAttachments((current) =>
+                            current.map((item) =>
+                              item.id === attachment.id
+                                ? {
+                                    ...item,
+                                    file,
+                                    name: file ? file.name : "",
+                                  }
+                                : item
+                            )
+                          );
+                        }}
+                        className="text-xs text-[#5a4a44] file:mr-3 file:rounded-full file:border-0 file:bg-[#c77d4b] file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white"
+                      />
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setSaleAttachments((current) =>
+                            current.filter((item) => item.id !== attachment.id)
+                          )
+                        }
+                        className="rounded-full border border-[#eadfce] px-3 py-2 text-xs text-[#5a4a44]"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                {saleAttachments.length === 0 ? (
+                  <p className="mt-2 text-[10px] text-[#7a6a63]">
+                    Optional files for this sale record.
+                  </p>
+                ) : (
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    {saleAttachments
+                      .filter((item) => item.name)
+                      .map((item) => (
+                        <span
+                          key={item.id}
+                          className="inline-flex rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#6b3e1e]"
+                        >
+                          {item.name}
+                        </span>
+                      ))}
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() =>
+                    setSaleAttachments((current) => [
+                      ...current,
+                      { id: Date.now(), label: "", file: null, name: "" },
+                    ])
+                  }
+                  className="mt-3 rounded-full border border-[#eadfce] px-3 py-2 text-xs text-[#5a4a44]"
+                >
+                  Add attachment
                 </button>
               </div>
               {saleType === "installments" && (
@@ -2319,18 +2908,21 @@ export default function VendorDashboard() {
                           className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_140px_140px_auto]"
                         >
                           <input
-                            type="number"
+                            type="text"
                             value={installment.amount}
                             onChange={(event) =>
                               setInstallments((current) =>
                                 current.map((item) =>
                                   item.id === installment.id
-                                    ? { ...item, amount: event.target.value }
+                                    ? {
+                                        ...item,
+                                        amount: formatKshInput(event.target.value),
+                                      }
                                     : item
                                 )
                               )
                             }
-                            placeholder="Amount paid"
+                            placeholder="Ksh 0"
                             className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
                           />
                           <input
@@ -2394,6 +2986,7 @@ export default function VendorDashboard() {
                                         ? {
                                             ...item,
                                             proofName: file ? file.name : "",
+                                            proofFile: file ?? null,
                                           }
                                         : item
                                     )
@@ -2434,59 +3027,70 @@ export default function VendorDashboard() {
                   >
                     Add installment
                   </button>
+                  <div className="mt-3">
+                    <label className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                      Next payment date
+                    </label>
+                    <input
+                      type="date"
+                      value={nextPaymentDate}
+                      onChange={(event) => setNextPaymentDate(event.target.value)}
+                      className="mt-2 w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                    />
+                  </div>
                 </div>
               )}
               <div className="rounded-2xl border border-[#eadfce] bg-white px-4 py-3 text-[11px] text-[#5a4a44]">
                 <p>
-                  Net to vendor: $
+                  Net to vendor: Ksh{" "}
                   {Math.max(
-                    (Number(salePriceInput) || 0) -
+                    parseKshInput(salePriceInput) -
                       charges.reduce((sum, charge) => {
-                        const fee = Number(charge.amount) || 0;
+                        const fee = parseKshInput(charge.amount);
                         return sum + fee;
                       }, 0),
                     0
                   ).toLocaleString()}
                 </p>
                 <p className="mt-1">
-                  Total paid: $
+                  Total paid: Ksh{" "}
                   {(saleType === "cash"
                     ? Math.max(
-                        (Number(salePriceInput) || 0) -
+                        parseKshInput(salePriceInput) -
                           charges.reduce((sum, charge) => {
-                            const fee = Number(charge.amount) || 0;
+                            const fee = parseKshInput(charge.amount);
                             return sum + fee;
                           }, 0),
                         0
                       )
                     : installments.reduce((sum, installment) => {
-                        const paid = Number(installment.amount) || 0;
+                        const paid = parseKshInput(installment.amount);
                         return sum + paid;
                       }, 0)
                   ).toLocaleString()}
                 </p>
                 <p className="mt-1">
-                  Remaining balance: $
+                  Remaining balance: Ksh{" "}
                   {Math.max(
                     Math.max(
-                      (Number(salePriceInput) || 0) -
+                      parseKshInput(salePriceInput) -
                         charges.reduce((sum, charge) => {
-                          const fee = Number(charge.amount) || 0;
+                          const fee = parseKshInput(charge.amount);
                           return sum + fee;
                         }, 0),
                       0
                     ) -
                       (saleType === "cash"
                         ? Math.max(
-                            (Number(salePriceInput) || 0) -
+                            parseKshInput(salePriceInput) -
                               charges.reduce((sum, charge) => {
-                                const fee = Number(charge.amount) || 0;
+                                const fee = parseKshInput(charge.amount);
                                 return sum + fee;
                               }, 0),
                             0
                           )
                         : installments.reduce((sum, installment) => {
-                            const paid = Number(installment.amount) || 0;
+                            const paid = parseKshInput(installment.amount);
                             return sum + paid;
                           }, 0)),
                     0

@@ -25,9 +25,12 @@ export default function Home() {
           amenities?: string[];
           vendorName?: string;
           vendorType?: "Company" | "Individual";
+          vendorId?: string;
           parcels?: { name?: string; cleanPath?: { lat: number; lng: number }[] }[];
+          nodes?: { label?: string; imageUrl?: string }[];
         };
         const parcels = data.parcels ?? [];
+        const nodes = data.nodes ?? [];
         const priceLabel =
           data.price && data.price.toLowerCase().includes("ksh")
             ? data.price
@@ -65,10 +68,12 @@ export default function Home() {
             startPoint: polygon[0],
             polygon,
             vendor: data.vendorName || "Vendor",
+            vendorId: data.vendorId,
             vendorType: data.vendorType || "Individual",
             amenities: data.amenities || [],
             totalParcels,
             availableParcels: totalParcels,
+            nodes,
           });
         };
 

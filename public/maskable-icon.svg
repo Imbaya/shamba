@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="PlotTrust">
+  <rect width="512" height="512" fill="#1f3d2d"/>
+  <rect x="64" y="64" width="384" height="384" rx="88" fill="#f4f1ea"/>
+  <text x="256" y="298" text-anchor="middle" font-family="Fraunces, Georgia, serif" font-size="140" fill="#1f3d2d" font-weight="700">PT</text>
+</svg>

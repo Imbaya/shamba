@@ -12,6 +12,7 @@ export type Plot = {
   size: string;
   price: string;
   vendor: string;
+  vendorId?: string;
   vendorType: "Company" | "Individual";
   amenities: string[];
   center: [number, number];
@@ -19,6 +20,10 @@ export type Plot = {
   startPoint: [number, number];
   totalParcels?: number;
   availableParcels?: number;
+  nodes?: {
+    label?: string;
+    imageUrl?: string;
+  }[];
 };
 type MapboxMapProps = {
   plots: Plot[];
@@ -34,6 +39,11 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
   const [activePlot, setActivePlot] = useState<Plot | null>(null);
   const [streetViewOpen, setStreetViewOpen] = useState(false);
   const [streetViewStep, setStreetViewStep] = useState(0);
+  const [streetViewPrevStep, setStreetViewPrevStep] = useState<number | null>(
+    null
+  );
+  const [streetViewAnimating, setStreetViewAnimating] = useState(false);
+  const lastStreetTapRef = useRef(0);
   const [inquiryOpen, setInquiryOpen] = useState(false);
   const [inquiryName, setInquiryName] = useState("");
   const [inquiryPhone, setInquiryPhone] = useState("");
@@ -44,27 +54,11 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
   const [inquirySaving, setInquirySaving] = useState(false);
   const [inquiryError, setInquiryError] = useState<string | null>(null);
 
-  const tourNodes = useMemo(() => {
-    if (!activePlot) return [];
-    return [
-      {
-        label: "Landmark",
-        caption: "Main junction, 120m from plot.",
-      },
-      {
-        label: "Access road",
-        caption: "Gravel road, passable in 4x4.",
-      },
-      {
-        label: "Plot entrance",
-        caption: "Visible boundary markers and gate.",
-      },
-      {
-        label: "Plot center",
-        caption: "Core of the parcel, flat terrain.",
-      },
-    ];
-  }, [activePlot]);
+  const streetNodes = useMemo(
+    () =>
+      activePlot?.nodes?.filter((node) => node.imageUrl) ?? [],
+    [activePlot]
+  );
   const mapTilerKey = process.env.NEXT_PUBLIC_MAPTILER_KEY;
   const hasSatellite = Boolean(
     mapTilerKey && mapTilerKey !== "YOUR_MAPTILER_KEY"
@@ -108,10 +102,12 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
         plotLabel: activePlot.label,
         vendorName: activePlot.vendor,
         vendorType: activePlot.vendorType,
+        vendorId: activePlot.vendorId,
         buyerName: inquiryName,
         buyerPhone: inquiryPhone,
         preferredContact: inquiryMethod,
         message: inquiryMessage,
+        status: "new",
         createdAt: serverTimestamp(),
       });
       setInquiryOpen(false);
@@ -123,6 +119,36 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
     } finally {
       setInquirySaving(false);
     }
+  };
+
+  useEffect(() => {
+    if (streetViewPrevStep === null) return;
+    const timer = setTimeout(() => {
+      setStreetViewPrevStep(null);
+      setStreetViewAnimating(false);
+    }, 520);
+    return () => clearTimeout(timer);
+  }, [streetViewPrevStep, streetViewStep]);
+
+  const goToStreetStep = (nextStep: number) => {
+    if (!streetNodes.length) return;
+    const bounded = Math.max(0, Math.min(nextStep, streetNodes.length - 1));
+    if (bounded === streetViewStep) return;
+    setStreetViewPrevStep(streetViewStep);
+    setStreetViewStep(bounded);
+    setStreetViewAnimating(true);
+  };
+
+  const handleStreetAdvance = () => {
+    goToStreetStep(streetViewStep + 1);
+  };
+
+  const handleStreetTouch = () => {
+    const now = Date.now();
+    if (now - lastStreetTapRef.current < 300) {
+      handleStreetAdvance();
+    }
+    lastStreetTapRef.current = now;
   };
 
   useEffect(() => {
@@ -341,7 +367,7 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
       <div ref={containerRef} className="h-full w-full" />
 
       {activePlot && (
-        <div className="absolute right-4 top-4 z-20 w-[260px] max-w-[85vw] rounded-3xl border border-[#eadfce] bg-white/95 p-4 text-xs shadow-[0_20px_60px_-40px_rgba(20,17,15,0.6)] backdrop-blur sm:right-6 sm:top-6">
+        <div className="absolute inset-x-3 bottom-3 z-20 w-auto max-h-[70vh] overflow-y-auto rounded-3xl border border-[#eadfce] bg-white/95 p-4 text-xs shadow-[0_20px_60px_-40px_rgba(20,17,15,0.6)] backdrop-blur transition-transform duration-300 ease-out animate-slide-up sm:inset-x-auto sm:bottom-auto sm:right-6 sm:top-6 sm:w-[260px] sm:max-h-none sm:overflow-visible">
           <div className="flex items-start justify-between">
             <div>
               <p className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
@@ -392,6 +418,8 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
                 type="button"
                 onClick={() => {
                   setStreetViewStep(0);
+                  setStreetViewPrevStep(null);
+                  setStreetViewAnimating(false);
                   setStreetViewOpen(true);
                 }}
                 className="mt-4 w-full rounded-full bg-[#1f3d2d] px-3 py-2 text-[11px] font-semibold text-white"
@@ -514,7 +542,9 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
                   {activePlot.label}
                 </p>
                 <p className="mt-1 text-xs text-[#5a4a44]">
-                  Step {streetViewStep + 1} of {tourNodes.length}
+                  {streetNodes.length > 0
+                    ? `Step ${streetViewStep + 1} of ${streetNodes.length}`
+                    : "No street view nodes yet"}
                 </p>
               </div>
               <button
@@ -527,41 +557,138 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
             </div>
 
             <div className="mt-5 overflow-hidden rounded-3xl border border-[#eadfce] bg-[radial-gradient(circle_at_top,_#f4ede2,_#f0e6d7_50%,_#efe1cd)]">
-              <div className="flex h-[280px] items-center justify-center text-sm text-[#6b3e1e]">
-                {tourNodes[streetViewStep]?.label ?? "Tour node"}
-              </div>
+              {streetNodes.length > 0 ? (
+                <div className="relative h-[280px]">
+                  {streetViewPrevStep !== null && (
+                    <div
+                      key={`street-prev-${streetViewPrevStep}`}
+                      className={`absolute inset-0 bg-cover bg-center transition-opacity duration-300 ease-out ${
+                        streetViewAnimating ? "opacity-0" : "opacity-100"
+                      } street-swipe-out`}
+                      style={{
+                        backgroundImage: `url(${streetNodes[streetViewPrevStep]?.imageUrl})`,
+                        backgroundSize: "130% 100%",
+                        backgroundPosition: "50% 50%",
+                      }}
+                    />
+                  )}
+                  <div
+                    key={`street-current-${streetViewStep}`}
+                    className={`relative h-full w-full bg-cover bg-center transition-all duration-300 ease-out street-swipe-in ${
+                      streetViewAnimating
+                        ? "scale-[1.02] opacity-90"
+                        : "scale-100 opacity-100"
+                    }`}
+                    style={{
+                      backgroundImage: `url(${streetNodes[streetViewStep]?.imageUrl})`,
+                      backgroundSize: "130% 100%",
+                      backgroundPosition: "50% 50%",
+                    }}
+                    onDoubleClick={handleStreetAdvance}
+                    onTouchEnd={handleStreetTouch}
+                    role="button"
+                    tabIndex={0}
+                    aria-label="Advance to next street view node"
+                  />
+                  <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-between px-4 py-3 text-[10px] text-white">
+                    <span className="rounded-full bg-black/40 px-2 py-1">
+                      Node {streetViewStep + 1} of {streetNodes.length}
+                    </span>
+                    <span className="rounded-full bg-black/40 px-2 py-1">
+                      Double tap to advance
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex h-[280px] items-center justify-center text-sm text-[#6b3e1e]">
+                  No street view images available yet.
+                </div>
+              )}
             </div>
 
-            <div className="mt-4 flex items-center justify-between text-xs text-[#5a4a44]">
-              <p>{tourNodes[streetViewStep]?.caption}</p>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() =>
-                    setStreetViewStep((current) => Math.max(0, current - 1))
-                  }
-                  className="rounded-full border border-[#eadfce] px-3 py-1 text-xs text-[#5a4a44]"
-                  disabled={streetViewStep === 0}
-                >
-                  Back
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setStreetViewStep((current) =>
-                      Math.min(tourNodes.length - 1, current + 1)
-                    )
-                  }
-                  className="rounded-full bg-[#c77d4b] px-3 py-1 text-xs text-white"
-                  disabled={streetViewStep >= tourNodes.length - 1}
-                >
-                  Next
-                </button>
+            {streetNodes.length > 0 && (
+              <div className="mt-4 flex items-center justify-between text-xs text-[#5a4a44]">
+                <p className="text-[#7a6a63]">
+                  Double tap the image to move forward.
+                </p>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => goToStreetStep(streetViewStep - 1)}
+                    className="rounded-full border border-[#eadfce] px-3 py-1 text-xs text-[#5a4a44]"
+                    disabled={streetViewStep === 0}
+                  >
+                    Back
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => goToStreetStep(streetViewStep + 1)}
+                    className="rounded-full bg-[#c77d4b] px-3 py-1 text-xs text-white"
+                    disabled={streetViewStep >= streetNodes.length - 1}
+                  >
+                    Next
+                  </button>
+                </div>
               </div>
-            </div>
+            )}
           </div>
         </div>
       )}
+      <style jsx>{`
+        .animate-slide-up {
+          animation: slideUp 280ms ease-out;
+        }
+        @keyframes slideUp {
+          0% {
+            transform: translateY(16px);
+            opacity: 0;
+          }
+          100% {
+            transform: translateY(0);
+            opacity: 1;
+          }
+        }
+        .street-swipe-in {
+          animation: streetSwipeIn 520ms cubic-bezier(0.2, 0.8, 0.2, 1);
+        }
+        .street-swipe-out {
+          animation: streetSwipeOut 520ms cubic-bezier(0.2, 0.8, 0.2, 1);
+        }
+        @keyframes streetSwipeIn {
+          0% {
+            opacity: 0;
+            transform: translateX(8%) scale(1.2);
+            filter: blur(6px);
+          }
+          60% {
+            opacity: 0.95;
+            transform: translateX(2%) scale(1.02);
+            filter: blur(1.5px);
+          }
+          100% {
+            opacity: 1;
+            transform: translateX(0%) scale(1);
+            filter: blur(0px);
+          }
+        }
+        @keyframes streetSwipeOut {
+          0% {
+            opacity: 1;
+            transform: translateX(0%) scale(1);
+            filter: blur(0px);
+          }
+          60% {
+            opacity: 0.6;
+            transform: translateX(-4%) scale(1.08);
+            filter: blur(3px);
+          }
+          100% {
+            opacity: 0;
+            transform: translateX(-10%) scale(1.12);
+            filter: blur(6px);
+          }
+        }
+      `}</style>
     </div>
   );
 }
