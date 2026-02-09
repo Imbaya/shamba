@@ -208,6 +208,8 @@ export default function VendorDashboard() {
       gpsAccuracy?: number;
       waitingForFix?: boolean;
       hasGoodFix?: boolean;
+      anchorPoint?: { lat: number; lng: number } | null;
+      anchorLocked?: boolean;
     }[]
   >([
     {
@@ -220,6 +222,8 @@ export default function VendorDashboard() {
       gpsAccuracy: undefined,
       waitingForFix: false,
       hasGoodFix: false,
+      anchorPoint: null,
+      anchorLocked: false,
     },
   ]);
   const [locationStatus, setLocationStatus] = useState<string | null>(null);
@@ -858,6 +862,8 @@ export default function VendorDashboard() {
               cleanPath: [],
               waitingForFix: true,
               hasGoodFix: false,
+              anchorPoint: null,
+              anchorLocked: false,
             }
           : item
       )
@@ -886,6 +892,33 @@ export default function VendorDashboard() {
               : 0;
           const heading = headingRef.current;
           const speed = pos.coords.speed ?? 0;
+          const anchorLocked = Boolean(parcel.anchorLocked);
+          if (!anchorLocked) {
+            if (accuracy <= minGpsAccuracyMeters) {
+              const anchorPoint = nextPoint;
+              lastGpsTimestampRef.current[parcelId] = pos.timestamp;
+              return current.map((item) =>
+                item.id === parcelId
+                  ? {
+                      ...item,
+                      rawPath: [anchorPoint],
+                      cleanPath: [anchorPoint],
+                      gpsAccuracy: accuracy,
+                      waitingForFix: false,
+                      hasGoodFix: true,
+                      anchorPoint,
+                      anchorLocked: true,
+                    }
+                  : item
+              );
+            }
+            return current.map((item) =>
+              item.id === parcelId
+                ? { ...item, gpsAccuracy: accuracy, waitingForFix: true }
+                : item
+            );
+          }
+
           if (lastPoint && heading !== null && speed > 0.2 && dt > 0) {
             const projected = movePoint(lastPoint, speed * dt, heading);
             fusedPoint = smoothPoint(lastPoint, projected, accuracy);
@@ -893,14 +926,6 @@ export default function VendorDashboard() {
             fusedPoint = smoothPoint(lastPoint, nextPoint, accuracy);
           }
           lastGpsTimestampRef.current[parcelId] = pos.timestamp;
-
-          if (!parcel.hasGoodFix && accuracy > minGpsAccuracyMeters) {
-            return current.map((item) =>
-              item.id === parcelId
-                ? { ...item, gpsAccuracy: accuracy, waitingForFix: true }
-                : item
-            );
-          }
 
           if (accuracy > minGpsAccuracyMeters) {
             if (accuracy <= maxFusionAccuracyMeters && lastPoint && heading !== null) {
@@ -915,6 +940,7 @@ export default function VendorDashboard() {
                       gpsAccuracy: accuracy,
                       waitingForFix: false,
                       hasGoodFix: true,
+                      anchorLocked: true,
                     }
                   : item
               );
@@ -934,6 +960,7 @@ export default function VendorDashboard() {
                     gpsAccuracy: accuracy,
                     waitingForFix: false,
                     hasGoodFix: true,
+                    anchorLocked: true,
                   }
                 : item
             );
@@ -949,6 +976,7 @@ export default function VendorDashboard() {
                   gpsAccuracy: accuracy,
                   waitingForFix: false,
                   hasGoodFix: true,
+                  anchorLocked: true,
                 }
               : item
           );
@@ -980,8 +1008,55 @@ export default function VendorDashboard() {
           previewOpen: true,
           cleanPath: closedClean,
           waitingForFix: false,
+          anchorLocked: item.anchorLocked ?? false,
         };
       })
+    );
+  };
+
+  const lockAnchorManually = (parcelId: number) => {
+    if (!navigator.geolocation) {
+      setLocationStatus("Geolocation not supported.");
+      return;
+    }
+    setLocationStatus("Locking anchor point...");
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const accuracy = pos.coords.accuracy ?? 0;
+        if (accuracy > minGpsAccuracyMeters) {
+          setLocationStatus(
+            `Anchor needs ≤${minGpsAccuracyMeters}m accuracy (now ±${Math.round(
+              accuracy
+            )}m)`
+          );
+          return;
+        }
+        const anchorPoint = {
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+        };
+        setSubParcels((current) =>
+          current.map((item) =>
+            item.id === parcelId
+              ? {
+                  ...item,
+                  anchorPoint,
+                  anchorLocked: true,
+                  rawPath: [anchorPoint],
+                  cleanPath: [anchorPoint],
+                  waitingForFix: false,
+                  hasGoodFix: true,
+                  gpsAccuracy: accuracy,
+                }
+              : item
+          )
+        );
+        setLocationStatus("Anchor locked.");
+      },
+      () => {
+        setLocationStatus("Unable to lock anchor. Check permissions.");
+      },
+      { enableHighAccuracy: true, timeout: 10000 }
     );
   };
 
@@ -3579,6 +3654,8 @@ export default function VendorDashboard() {
                           gpsAccuracy: undefined,
                           waitingForFix: false,
                           hasGoodFix: false,
+                          anchorPoint: null,
+                          anchorLocked: false,
                         },
                       ])
                     }
@@ -3692,6 +3769,14 @@ export default function VendorDashboard() {
                           </button>
                           <button
                             type="button"
+                            onClick={() => lockAnchorManually(parcel.id)}
+                            className="rounded-full border border-[#1f3d2d]/30 px-4 py-2 text-xs font-semibold text-[#1f3d2d]"
+                            disabled={!parcel.mappingActive}
+                          >
+                            Lock anchor
+                          </button>
+                          <button
+                            type="button"
                             onClick={() => stopGpsCapture(parcel.id)}
                             className="rounded-full border border-[#1f3d2d]/30 px-4 py-2 text-xs font-semibold text-[#1f3d2d]"
                           >
@@ -3771,6 +3856,22 @@ export default function VendorDashboard() {
                               </span>
                               {parcel.gpsAccuracy ? (
                                 <span>±{Math.round(parcel.gpsAccuracy)}m</span>
+                              ) : null}
+                            </div>
+                          )}
+                          {parcel.mappingActive && (
+                            <div className="mt-2 flex flex-wrap items-center justify-between text-[10px] text-[#7a5f54]">
+                              <span>
+                                Anchor:{" "}
+                                {parcel.anchorLocked
+                                  ? "Locked"
+                                  : "Waiting for lock"}
+                              </span>
+                              {parcel.anchorPoint ? (
+                                <span>
+                                  {parcel.anchorPoint.lat.toFixed(5)},{" "}
+                                  {parcel.anchorPoint.lng.toFixed(5)}
+                                </span>
                               ) : null}
                             </div>
                           )}
