@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -62,9 +62,7 @@ export default function Home() {
           ];
           mapped.push({
             id: `${docSnap.id}-${idx}`,
-            label:
-              parcelName ||
-              (data.name ? `${data.name} · Parcel ${idx + 1}` : `Parcel ${idx + 1}`),
+            label: data.name || parcelName || `Parcel ${idx + 1}`,
             size: data.acres || "",
             price: priceLabel,
             center: centerLngLat,

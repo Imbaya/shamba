@@ -227,6 +227,7 @@ export default function VendorDashboard() {
       anchorLocking?: boolean;
       samplingCorner?: boolean;
       cornerSampleCount?: number;
+      cornerCountdown?: number;
     }[]
   >([
     {
@@ -245,6 +246,7 @@ export default function VendorDashboard() {
       anchorLocking: false,
       samplingCorner: false,
       cornerSampleCount: 0,
+      cornerCountdown: 0,
     },
   ]);
   const [locationStatus, setLocationStatus] = useState<string | null>(null);
@@ -255,6 +257,13 @@ export default function VendorDashboard() {
     parcelId: number | null;
     lastLngLat: { lng: number; lat: number } | null;
   }>({ parcelId: null, lastLngLat: null });
+  const mapPreviewDataRef = useRef<
+    {
+      id: number;
+      name: string;
+      polygon: [number, number][];
+    }[]
+  >([]);
   const headingRef = useRef<number | null>(null);
   const stepsRef = useRef(0);
   const lastStepTimeRef = useRef(0);
@@ -1264,6 +1273,10 @@ export default function VendorDashboard() {
   );
 
   useEffect(() => {
+    mapPreviewDataRef.current = mapPreviewParcels;
+  }, [mapPreviewParcels]);
+
+  useEffect(() => {
     if (!mapPreviewOpen) return;
     if (!mapPreviewRef.current) return;
 
@@ -1303,6 +1316,29 @@ export default function VendorDashboard() {
             "line-width": 2,
           },
         });
+
+        const source = map.getSource("parcel-preview") as maplibregl.GeoJSONSource;
+        if (source) {
+          const parcels = mapPreviewDataRef.current;
+          source.setData({
+            type: "FeatureCollection",
+            features: parcels.map((parcel) => ({
+              type: "Feature",
+              properties: { id: parcel.id },
+              geometry: {
+                type: "Polygon",
+                coordinates: [parcel.polygon],
+              },
+            })),
+          });
+          if (parcels.length) {
+            const bounds = new maplibregl.LngLatBounds();
+            parcels.forEach((parcel) => {
+              parcel.polygon.forEach((coord) => bounds.extend(coord));
+            });
+            map.fitBounds(bounds, { padding: 40, duration: 0 });
+          }
+        }
       });
 
       map.on("mousedown", "parcel-preview-fill", (event) => {
@@ -1819,6 +1855,7 @@ export default function VendorDashboard() {
               ...item,
               samplingCorner: true,
               cornerSampleCount: 0,
+              cornerCountdown: Math.ceil(beaconSampleWindowMs / 1000),
             }
           : item
       )
@@ -1826,6 +1863,7 @@ export default function VendorDashboard() {
     const watchId = navigator.geolocation.watchPosition(
       (pos) => {
         const accuracy = pos.coords.accuracy ?? 0;
+        const signalStrength = calcSignalStrength(accuracy);
         if (accuracy > minGpsAccuracyMeters) {
           setLocationStatus(
             `Hold still... waiting for ≤${minGpsAccuracyMeters}m accuracy`
@@ -1845,6 +1883,8 @@ export default function VendorDashboard() {
                 ? {
                     ...item,
                     cornerSampleCount: entry.samples.length,
+                    gpsAccuracy: accuracy,
+                    signalStrength,
                   }
                 : item
             )
@@ -1857,12 +1897,25 @@ export default function VendorDashboard() {
       { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
     );
     cornerSampleRef.current[parcelId].watchId = watchId;
+    const countdownId = window.setInterval(() => {
+      setSubParcels((current) =>
+        current.map((item) =>
+          item.id === parcelId
+            ? {
+                ...item,
+                cornerCountdown: Math.max((item.cornerCountdown ?? 1) - 1, 0),
+              }
+            : item
+        )
+      );
+    }, 1000);
     const timeoutId = window.setTimeout(() => {
       const entry = cornerSampleRef.current[parcelId];
       if (!entry) return;
       if (entry.watchId !== null) {
         navigator.geolocation.clearWatch(entry.watchId);
       }
+      window.clearInterval(countdownId);
       const averaged = averageCornerSamples(entry.samples);
       if (!averaged) {
         setLocationStatus("No reliable samples collected. Try again.");
@@ -1884,6 +1937,7 @@ export default function VendorDashboard() {
                 cleanPath: [...item.cleanPath, averaged],
                 samplingCorner: false,
                 cornerSampleCount: 0,
+                cornerCountdown: 0,
                 waitingForFix: false,
                 hasGoodFix: true,
               }
@@ -1914,6 +1968,7 @@ export default function VendorDashboard() {
               cleanPath: [],
               samplingCorner: false,
               cornerSampleCount: 0,
+              cornerCountdown: 0,
             }
           : item
       )
@@ -5005,11 +5060,22 @@ export default function VendorDashboard() {
                               km (est.)
                             </span>
                           </div>
+                          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[10px] text-[#7a5f54]">
+                            <span>
+                              Corners captured: {parcel.cleanPath.length}
+                            </span>
+                            {parcel.cleanPath.length >= 3 && !parcel.samplingCorner && (
+                              <span>Ready to preview</span>
+                            )}
+                          </div>
                           {parcel.samplingCorner && (
                             <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[10px] text-[#6b3e1e]">
-                              <span>Sampling GPS...</span>
                               <span>
-                                Samples: {parcel.cornerSampleCount ?? 0}
+                                Sampling... {parcel.cornerCountdown ?? 0}s
+                              </span>
+                              <span>Samples: {parcel.cornerSampleCount ?? 0}</span>
+                              <span>
+                                Signal {Math.round(parcel.signalStrength ?? 0)}%
                               </span>
                             </div>
                           )}

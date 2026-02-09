@@ -197,6 +197,28 @@ export default function PortalPage() {
             <p className="mt-2 text-sm text-[#5a4a44]">
               Create or open a vendor portal.
             </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCompanyForm(true);
+                  setShowIndividualForm(false);
+                }}
+                className="rounded-full border border-[#eadfce] bg-white px-4 py-2 text-xs font-semibold text-[#1f3d2d]"
+              >
+                Register company portal
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowIndividualForm(true);
+                  setShowCompanyForm(false);
+                }}
+                className="rounded-full border border-[#eadfce] bg-white px-4 py-2 text-xs font-semibold text-[#1f3d2d]"
+              >
+                Register individual portal
+              </button>
+            </div>
           </div>
         </div>
 
@@ -248,37 +270,24 @@ export default function PortalPage() {
           </div>
 
           <div className="space-y-6">
-            <div className="flex flex-wrap gap-2 lg:hidden">
-              <button
-                type="button"
-                onClick={() => {
-                  setShowCompanyForm(true);
-                  setShowIndividualForm(false);
-                }}
-                className="rounded-full border border-[#eadfce] bg-white px-4 py-2 text-xs font-semibold text-[#1f3d2d]"
-              >
-                Register company portal
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setShowIndividualForm(true);
-                  setShowCompanyForm(false);
-                }}
-                className="rounded-full border border-[#eadfce] bg-white px-4 py-2 text-xs font-semibold text-[#1f3d2d]"
-              >
-                Register individual portal
-              </button>
-            </div>
 
             <div
               className={`rounded-3xl border border-[#eadfce] bg-white p-5 ${
                 showCompanyForm ? "block" : "hidden"
               } lg:block`}
             >
-              <p className="text-xs uppercase tracking-[0.3em] text-[#a67047]">
-                Register company portal
-              </p>
+              <div className="flex items-start justify-between">
+                <p className="text-xs uppercase tracking-[0.3em] text-[#a67047]">
+                  Register company portal
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShowCompanyForm(false)}
+                  className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#5a4a44]"
+                >
+                  Close
+                </button>
+              </div>
               <div className="mt-4 grid gap-3 text-sm">
                 <input
                   type="text"
@@ -340,9 +349,18 @@ export default function PortalPage() {
                 showIndividualForm ? "block" : "hidden"
               } lg:block`}
             >
-              <p className="text-xs uppercase tracking-[0.3em] text-[#a67047]">
-                Register individual portal
-              </p>
+              <div className="flex items-start justify-between">
+                <p className="text-xs uppercase tracking-[0.3em] text-[#a67047]">
+                  Register individual portal
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setShowIndividualForm(false)}
+                  className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#5a4a44]"
+                >
+                  Close
+                </button>
+              </div>
               <div className="mt-4 grid gap-3 text-sm">
                 <input
                   type="text"
