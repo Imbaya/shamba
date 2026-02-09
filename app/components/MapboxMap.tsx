@@ -20,6 +20,7 @@ export type Plot = {
   startPoint: [number, number];
   totalParcels?: number;
   availableParcels?: number;
+  isSold?: boolean;
   nodes?: {
     label?: string;
     imageUrl?: string;
@@ -43,6 +44,7 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
     null
   );
   const [streetViewAnimating, setStreetViewAnimating] = useState(false);
+  const [streetPanValue, setStreetPanValue] = useState(50);
   const lastStreetTapRef = useRef(0);
   const [inquiryOpen, setInquiryOpen] = useState(false);
   const [inquiryName, setInquiryName] = useState("");
@@ -78,6 +80,7 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
         type: "Feature" as const,
         properties: {
           id: plot.id,
+          sold: Boolean(plot.isSold),
         },
         geometry: {
           type: "Polygon" as const,
@@ -137,6 +140,7 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
     setStreetViewPrevStep(streetViewStep);
     setStreetViewStep(bounded);
     setStreetViewAnimating(true);
+    setStreetPanValue(50);
   };
 
   const handleStreetAdvance = () => {
@@ -184,7 +188,12 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
           type: "fill",
           source: "plots",
           paint: {
-            "fill-color": "#c77d4b",
+            "fill-color": [
+              "case",
+              ["==", ["get", "sold"], true],
+              "#d9d0c7",
+              "#c77d4b",
+            ],
             "fill-opacity": 0.28,
           },
         });
@@ -196,7 +205,12 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
           type: "line",
           source: "plots",
           paint: {
-            "line-color": "#1f3d2d",
+            "line-color": [
+              "case",
+              ["==", ["get", "sold"], true],
+              "#9a8f87",
+              "#1f3d2d",
+            ],
             "line-width": 2,
           },
         });
@@ -208,13 +222,17 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
       markerRef.current = [];
       visiblePlots.forEach((plot) => {
         const marker = document.createElement("div");
-        marker.style.background = "rgba(255,255,255,0.92)";
-        marker.style.border = "1px solid rgba(234,223,206,0.9)";
+        marker.style.background = plot.isSold
+          ? "rgba(217,208,199,0.9)"
+          : "rgba(255,255,255,0.92)";
+        marker.style.border = plot.isSold
+          ? "1px solid rgba(185,176,168,0.9)"
+          : "1px solid rgba(234,223,206,0.9)";
         marker.style.borderRadius = "999px";
         marker.style.padding = "6px 10px";
         marker.style.fontSize = "12px";
         marker.style.fontWeight = "600";
-        marker.style.color = "#14110f";
+        marker.style.color = plot.isSold ? "#6b6058" : "#14110f";
         marker.style.boxShadow = "0 8px 16px rgba(20,17,15,0.18)";
         marker.innerText = plot.price;
         marker.style.cursor = "pointer";
@@ -272,13 +290,17 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
     markerRef.current = [];
     visiblePlots.forEach((plot) => {
       const marker = document.createElement("div");
-      marker.style.background = "rgba(255,255,255,0.92)";
-      marker.style.border = "1px solid rgba(234,223,206,0.9)";
+      marker.style.background = plot.isSold
+        ? "rgba(217,208,199,0.9)"
+        : "rgba(255,255,255,0.92)";
+      marker.style.border = plot.isSold
+        ? "1px solid rgba(185,176,168,0.9)"
+        : "1px solid rgba(234,223,206,0.9)";
       marker.style.borderRadius = "999px";
       marker.style.padding = "6px 10px";
       marker.style.fontSize = "12px";
       marker.style.fontWeight = "600";
-      marker.style.color = "#14110f";
+      marker.style.color = plot.isSold ? "#6b6058" : "#14110f";
       marker.style.boxShadow = "0 8px 16px rgba(20,17,15,0.18)";
       marker.innerText = plot.price;
       marker.style.cursor = "pointer";
@@ -420,6 +442,7 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
                   setStreetViewStep(0);
                   setStreetViewPrevStep(null);
                   setStreetViewAnimating(false);
+                  setStreetPanValue(50);
                   setStreetViewOpen(true);
                 }}
                 className="mt-4 w-full rounded-full bg-[#1f3d2d] px-3 py-2 text-[11px] font-semibold text-white"
@@ -568,7 +591,7 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
                       style={{
                         backgroundImage: `url(${streetNodes[streetViewPrevStep]?.imageUrl})`,
                         backgroundSize: "130% 100%",
-                        backgroundPosition: "50% 50%",
+                        backgroundPosition: `${streetPanValue}% 50%`,
                       }}
                     />
                   )}
@@ -582,7 +605,7 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
                     style={{
                       backgroundImage: `url(${streetNodes[streetViewStep]?.imageUrl})`,
                       backgroundSize: "130% 100%",
-                      backgroundPosition: "50% 50%",
+                      backgroundPosition: `${streetPanValue}% 50%`,
                     }}
                     onDoubleClick={handleStreetAdvance}
                     onTouchEnd={handleStreetTouch}
@@ -607,27 +630,44 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
             </div>
 
             {streetNodes.length > 0 && (
-              <div className="mt-4 flex items-center justify-between text-xs text-[#5a4a44]">
-                <p className="text-[#7a6a63]">
-                  Double tap the image to move forward.
-                </p>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => goToStreetStep(streetViewStep - 1)}
-                    className="rounded-full border border-[#eadfce] px-3 py-1 text-xs text-[#5a4a44]"
-                    disabled={streetViewStep === 0}
-                  >
-                    Back
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => goToStreetStep(streetViewStep + 1)}
-                    className="rounded-full bg-[#c77d4b] px-3 py-1 text-xs text-white"
-                    disabled={streetViewStep >= streetNodes.length - 1}
-                  >
-                    Next
-                  </button>
+              <div className="mt-4 space-y-3 text-xs text-[#5a4a44]">
+                <div className="flex items-center justify-between">
+                  <p className="text-[#7a6a63]">
+                    Double tap the image to move forward.
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => goToStreetStep(streetViewStep - 1)}
+                      className="rounded-full border border-[#eadfce] px-3 py-1 text-xs text-[#5a4a44]"
+                      disabled={streetViewStep === 0}
+                    >
+                      Back
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => goToStreetStep(streetViewStep + 1)}
+                      className="rounded-full bg-[#c77d4b] px-3 py-1 text-xs text-white"
+                      disabled={streetViewStep >= streetNodes.length - 1}
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="text-[10px] uppercase tracking-[0.2em] text-[#a67047]">
+                    Pan
+                  </span>
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    value={streetPanValue}
+                    onChange={(event) =>
+                      setStreetPanValue(Number(event.target.value))
+                    }
+                    className="h-2 w-full cursor-pointer appearance-none rounded-full bg-[#eadfce]"
+                  />
                 </div>
               </div>
             )}

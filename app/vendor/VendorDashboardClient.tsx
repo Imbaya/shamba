@@ -225,6 +225,8 @@ export default function VendorDashboard() {
       anchorPoint?: { lat: number; lng: number } | null;
       anchorLocked?: boolean;
       anchorLocking?: boolean;
+      samplingCorner?: boolean;
+      cornerSampleCount?: number;
     }[]
   >([
     {
@@ -241,6 +243,8 @@ export default function VendorDashboard() {
       anchorPoint: null,
       anchorLocked: false,
       anchorLocking: false,
+      samplingCorner: false,
+      cornerSampleCount: 0,
     },
   ]);
   const [locationStatus, setLocationStatus] = useState<string | null>(null);
@@ -271,6 +275,17 @@ export default function VendorDashboard() {
   const lastGpsTimestampRef = useRef<Record<number, number>>({});
   const watchIdRef = useRef<number | null>(null);
   const activeCaptureIdRef = useRef<number | null>(null);
+  const cornerSampleRef = useRef<
+    Record<
+      number,
+      {
+        start: number;
+        samples: { lat: number; lng: number }[];
+        watchId: number | null;
+        timeoutId?: number;
+      }
+    >
+  >({});
   const [vendorProfile, setVendorProfile] = useState<{
     name: string;
     type: "Individual" | "Company";
@@ -926,6 +941,7 @@ export default function VendorDashboard() {
   const minGpsAccuracyMeters = 8;
   const strideLengthMeters = 0.76;
   const anchorAverageWindowMs = 5000;
+  const beaconSampleWindowMs = 30000;
 
   const calcSignalStrength = (accuracy?: number) => {
     if (!accuracy || accuracy <= 0) return 0;
@@ -1749,6 +1765,160 @@ export default function VendorDashboard() {
   const generateSaleId = () => {
     const random = Math.floor(100000 + Math.random() * 900000);
     return `SALE-${random}`;
+  };
+
+  const averageCornerSamples = (samples: { lat: number; lng: number }[]) => {
+    if (samples.length === 0) return null;
+    const sortedLat = [...samples].map((s) => s.lat).sort((a, b) => a - b);
+    const sortedLng = [...samples].map((s) => s.lng).sort((a, b) => a - b);
+    const medianLat = sortedLat[Math.floor(sortedLat.length / 2)];
+    const medianLng = sortedLng[Math.floor(sortedLng.length / 2)];
+    const withDistance = samples
+      .map((s) => ({
+        ...s,
+        d: distance({ lat: medianLat, lng: medianLng }, s),
+      }))
+      .sort((a, b) => a.d - b.d);
+    const trimCount = Math.floor(withDistance.length * 0.1);
+    const trimmed =
+      withDistance.length > trimCount * 2
+        ? withDistance.slice(trimCount, withDistance.length - trimCount)
+        : withDistance;
+    const avg = trimmed.reduce(
+      (acc, s) => ({
+        lat: acc.lat + s.lat,
+        lng: acc.lng + s.lng,
+      }),
+      { lat: 0, lng: 0 }
+    );
+    return {
+      lat: avg.lat / trimmed.length,
+      lng: avg.lng / trimmed.length,
+    };
+  };
+
+  const captureCorner = (parcelId: number) => {
+    if (!navigator.geolocation) {
+      setLocationStatus("GPS not supported on this device.");
+      return;
+    }
+    const existing = cornerSampleRef.current[parcelId];
+    if (existing?.watchId !== null && existing?.watchId !== undefined) {
+      navigator.geolocation.clearWatch(existing.watchId);
+    }
+    setLocationStatus("Sampling corner... stand still.");
+    cornerSampleRef.current[parcelId] = {
+      start: Date.now(),
+      samples: [],
+      watchId: null,
+    };
+    setSubParcels((current) =>
+      current.map((item) =>
+        item.id === parcelId
+          ? {
+              ...item,
+              samplingCorner: true,
+              cornerSampleCount: 0,
+            }
+          : item
+      )
+    );
+    const watchId = navigator.geolocation.watchPosition(
+      (pos) => {
+        const accuracy = pos.coords.accuracy ?? 0;
+        if (accuracy > minGpsAccuracyMeters) {
+          setLocationStatus(
+            `Hold still... waiting for ≤${minGpsAccuracyMeters}m accuracy`
+          );
+          return;
+        }
+        const sample = {
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+        };
+        const entry = cornerSampleRef.current[parcelId];
+        if (entry) {
+          entry.samples.push(sample);
+          setSubParcels((current) =>
+            current.map((item) =>
+              item.id === parcelId
+                ? {
+                    ...item,
+                    cornerSampleCount: entry.samples.length,
+                  }
+                : item
+            )
+          );
+        }
+      },
+      () => {
+        setLocationStatus("Unable to read GPS. Try moving to open sky.");
+      },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
+    );
+    cornerSampleRef.current[parcelId].watchId = watchId;
+    const timeoutId = window.setTimeout(() => {
+      const entry = cornerSampleRef.current[parcelId];
+      if (!entry) return;
+      if (entry.watchId !== null) {
+        navigator.geolocation.clearWatch(entry.watchId);
+      }
+      const averaged = averageCornerSamples(entry.samples);
+      if (!averaged) {
+        setLocationStatus("No reliable samples collected. Try again.");
+        setSubParcels((current) =>
+          current.map((item) =>
+            item.id === parcelId
+              ? { ...item, samplingCorner: false }
+              : item
+          )
+        );
+        return;
+      }
+      setSubParcels((current) =>
+        current.map((item) =>
+          item.id === parcelId
+            ? {
+                ...item,
+                rawPath: [...item.rawPath, averaged],
+                cleanPath: [...item.cleanPath, averaged],
+                samplingCorner: false,
+                cornerSampleCount: 0,
+                waitingForFix: false,
+                hasGoodFix: true,
+              }
+            : item
+        )
+      );
+      setLocationStatus("Corner captured.");
+      delete cornerSampleRef.current[parcelId];
+    }, beaconSampleWindowMs);
+    cornerSampleRef.current[parcelId].timeoutId = timeoutId;
+  };
+
+  const clearCorners = (parcelId: number) => {
+    const entry = cornerSampleRef.current[parcelId];
+    if (entry?.watchId !== null) {
+      navigator.geolocation.clearWatch(entry.watchId);
+    }
+    if (entry?.timeoutId) {
+      window.clearTimeout(entry.timeoutId);
+    }
+    delete cornerSampleRef.current[parcelId];
+    setSubParcels((current) =>
+      current.map((item) =>
+        item.id === parcelId
+          ? {
+              ...item,
+              rawPath: [],
+              cleanPath: [],
+              samplingCorner: false,
+              cornerSampleCount: 0,
+            }
+          : item
+      )
+    );
+    setLocationStatus(null);
   };
 
   const totalPostedValue =
@@ -4695,19 +4865,16 @@ export default function VendorDashboard() {
                   </p>
                   <ul className="mt-3 space-y-2 text-xs">
                     <li>
-                      Stand at the nearest recognizable beacon or plot corner and tap
-                      "Start mapping".
+                      Stand at the beacon (corner post) and tap "Capture corner".
                     </li>
                     <li>
-                      Wait until GPS accuracy reads within 1-3m before moving.
+                      Stay still while the app samples GPS for 30 seconds.
                     </li>
                     <li>
-                      Walk the full perimeter of the parcel. Keep your phone
-                      facing forward.
+                      Repeat for each corner (Beacon 1, 2, 3, 4...).
                     </li>
                     <li>
-                      Tap "Stop" when you return to your starting point or when
-                      the loop closes.
+                      The app connects captured corners with straight lines.
                     </li>
                     <li>
                       Review the boundary. If it looks wrong, recapture.
@@ -4737,62 +4904,43 @@ export default function VendorDashboard() {
                         <div className="flex items-center gap-3">
                           <span
                             className={`inline-flex h-3 w-3 rounded-full ${
-                              parcel.mappingActive
+                              parcel.samplingCorner
                                 ? "animate-pulse bg-[#c77d4b]"
                                 : "bg-[#eadfce]"
                             }`}
                           />
                           <p className="text-xs text-[#5a4a44]">
-                            {parcel.mappingActive
-                              ? "Mapping in progress..."
-                              : "Not mapping"}
+                            {parcel.samplingCorner
+                              ? "Sampling corner..."
+                              : "Ready to capture"}
                           </p>
                         </div>
                         <div className="flex flex-wrap gap-2">
                           <button
                             type="button"
-                            onClick={() => {
-                              setSubParcels((current) =>
-                                current.map((item) =>
-                                  item.id === parcel.id
-                                    ? {
-                                        ...item,
-                                        mappingActive: true,
-                                        previewOpen: true,
-                                        rawPath: [],
-                                        cleanPath: [],
-                                        waitingForFix: true,
-                                        hasGoodFix: false,
-                                        gpsAccuracy: undefined,
-                                        signalStrength: 0,
-                                        anchorPoint: null,
-                                        anchorLocked: false,
-                                        anchorLocking: false,
-                                      }
-                                    : item
-                                )
-                              );
-                              startGpsCapture(parcel.id);
-                            }}
+                            onClick={() => captureCorner(parcel.id)}
                             className="rounded-full bg-[#1f3d2d] px-4 py-2 text-xs font-semibold text-white"
+                            disabled={parcel.samplingCorner}
                           >
-                            Start mapping
+                            Capture corner
                           </button>
                           <button
                             type="button"
-                            onClick={() => lockAnchorManually(parcel.id)}
+                            onClick={() => clearCorners(parcel.id)}
                             className="rounded-full border border-[#1f3d2d]/30 px-4 py-2 text-xs font-semibold text-[#1f3d2d]"
-                            disabled={!parcel.mappingActive}
+                            disabled={parcel.samplingCorner}
                           >
-                            Lock anchor
+                            Clear corners
                           </button>
-                          <button
-                            type="button"
-                            onClick={() => stopGpsCapture(parcel.id)}
-                            className="rounded-full border border-[#1f3d2d]/30 px-4 py-2 text-xs font-semibold text-[#1f3d2d]"
-                          >
-                            Stop
-                          </button>
+                          {parcel.cleanPath.length >= 3 && !parcel.samplingCorner && (
+                            <button
+                              type="button"
+                              onClick={() => setMapPreviewOpen(true)}
+                              className="rounded-full border border-[#eadfce] bg-white px-4 py-2 text-xs font-semibold text-[#5a4a44]"
+                            >
+                              Done · Preview
+                            </button>
+                          )}
                         </div>
                       </div>
                       {parcel.previewOpen && (
@@ -4822,28 +4970,28 @@ export default function VendorDashboard() {
                               Hide
                             </button>
                           </div>
-                          <div className="mt-4 rounded-2xl border border-dashed border-[#eadfce] bg-white p-3">
-                            <svg
-                              width="100%"
-                              height="140"
-                              viewBox="0 0 240 140"
-                              className="w-full"
-                            >
-                              <path
-                                d={buildSvgPath(parcel.rawPath, 240, 140)}
-                                fill="none"
-                                stroke="#d8c7b6"
-                                strokeWidth="2"
-                                strokeDasharray="4 4"
-                              />
-                              <path
-                                d={buildSvgPath(parcel.cleanPath, 240, 140)}
-                                fill="none"
-                                stroke="#1f3d2d"
-                                strokeWidth="3"
-                              />
-                            </svg>
-                          </div>
+                <div className="mt-4 rounded-2xl border border-dashed border-[#eadfce] bg-white p-3">
+                  <svg
+                    width="100%"
+                    height="140"
+                    viewBox="0 0 240 140"
+                    className="w-full"
+                  >
+                    <path
+                      d={buildSvgPath(parcel.rawPath, 240, 140)}
+                      fill="none"
+                      stroke="#d8c7b6"
+                      strokeWidth="2"
+                      strokeDasharray="4 4"
+                    />
+                    <path
+                      d={buildSvgPath(parcel.cleanPath, 240, 140)}
+                      fill="none"
+                      stroke="#1f3d2d"
+                      strokeWidth="3"
+                    />
+                  </svg>
+                </div>
                           <div className="mt-4 flex flex-wrap items-center justify-between text-[11px] text-[#5a4a44]">
                             <span>
                               Raw points: {parcel.rawPath.length} · Corners:{" "}
@@ -4857,38 +5005,12 @@ export default function VendorDashboard() {
                               km (est.)
                             </span>
                           </div>
-                          {parcel.mappingActive && (
+                          {parcel.samplingCorner && (
                             <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[10px] text-[#6b3e1e]">
+                              <span>Sampling GPS...</span>
                               <span>
-                                Live capture{" "}
-                                {parcel.waitingForFix
-                                  ? `(waiting for ≤${minGpsAccuracyMeters}m)`
-                                  : "(tracking)"}
+                                Samples: {parcel.cornerSampleCount ?? 0}
                               </span>
-                              <span>
-                                Signal {Math.round(parcel.signalStrength ?? 0)}%
-                              </span>
-                              {parcel.gpsAccuracy ? (
-                                <span>±{Math.round(parcel.gpsAccuracy)}m</span>
-                              ) : null}
-                            </div>
-                          )}
-                          {parcel.mappingActive && (
-                            <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[10px] text-[#7a5f54]">
-                              <span>
-                                Anchor:{" "}
-                                {parcel.anchorLocked
-                                  ? "Locked"
-                                  : parcel.anchorLocking
-                                  ? "Locking..."
-                                  : "Waiting for lock"}
-                              </span>
-                              {parcel.anchorPoint ? (
-                                <span>
-                                  {parcel.anchorPoint.lat.toFixed(5)},{" "}
-                                  {parcel.anchorPoint.lng.toFixed(5)}
-                                </span>
-                              ) : null}
                             </div>
                           )}
                         </div>

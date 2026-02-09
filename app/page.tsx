@@ -25,10 +25,12 @@ export default function Home() {
           vendorName?: string;
           vendorType?: "Company" | "Individual";
           vendorId?: string;
+          soldParcelIds?: number[];
           parcels?: { name?: string; cleanPath?: { lat: number; lng: number }[] }[];
           nodes?: { label?: string; imageUrl?: string }[];
         };
         const parcels = data.parcels ?? [];
+        const soldParcelIds = data.soldParcelIds ?? [];
         const nodes = data.nodes ?? [];
         const priceLabel =
           data.price && data.price.toLowerCase().includes("ksh")
@@ -44,6 +46,8 @@ export default function Home() {
           parcelName?: string
         ) => {
           if (cleanPath.length < 3) return;
+          const parcelNumber = idx + 1;
+          const isSold = soldParcelIds.includes(parcelNumber);
           const polygon = cleanPath.map((point) => [point.lng, point.lat]) as [
             number,
             number
@@ -72,6 +76,7 @@ export default function Home() {
             amenities: data.amenities || [],
             totalParcels,
             availableParcels: totalParcels,
+            isSold,
             nodes,
           });
         };
@@ -354,6 +359,7 @@ export default function Home() {
               size: plot.size,
               price: plot.price,
               vendor: plot.vendor,
+              vendorId: plot.vendorId,
               vendorType: plot.vendorType,
               amenities: plot.amenities,
               center: plot.center,
@@ -361,6 +367,7 @@ export default function Home() {
               startPoint: plot.startPoint,
               totalParcels: plot.totalParcels,
               availableParcels: plot.availableParcels,
+              nodes: plot.nodes,
             }))}
           />
 
