@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import maplibregl from "maplibre-gl";
+import maplibregl, { type StyleSpecification } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import { addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { db } from "../../lib/firebase";
@@ -70,13 +70,12 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
   const hasSatellite = Boolean(mapboxToken);
   const fallbackStyleUrl =
     "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
-  const mapboxSatelliteStyle = useMemo(
-    () =>
-      ({
-        version: 8,
-        sources: {
-          "mapbox-satellite": {
-            type: "raster",
+  const mapboxSatelliteStyle = useMemo<StyleSpecification>(
+    () => ({
+      version: 8,
+      sources: {
+        "mapbox-satellite": {
+          type: "raster",
             tiles: mapboxToken
               ? [
                   `https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}.jpg?access_token=${mapboxToken}`,
@@ -136,7 +135,7 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
           },
         },
       ],
-    }) as const,
+    }),
     [mapboxToken]
   );
 
@@ -256,11 +255,13 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
 
-    const baseStyleUrl = hasSatellite ? mapboxSatelliteStyle : fallbackStyleUrl;
+    const baseStyleUrl: string | StyleSpecification = hasSatellite
+      ? mapboxSatelliteStyle
+      : fallbackStyleUrl;
 
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: baseStyleUrl as unknown as maplibregl.Style,
+      style: baseStyleUrl,
       center: [36.668, -1.248],
       zoom: 12.6,
       pitch: 0,
@@ -449,8 +450,8 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
 
   useEffect(() => {
     if (!mapRef.current) return;
-    const baseStyleUrl = hasSatellite
-      ? (mapboxSatelliteStyle as unknown as maplibregl.StyleSpecification)
+    const baseStyleUrl: string | StyleSpecification = hasSatellite
+      ? mapboxSatelliteStyle
       : fallbackStyleUrl;
     mapRef.current.setStyle(baseStyleUrl);
   }, [hasSatellite, mapboxSatelliteStyle, fallbackStyleUrl]);
