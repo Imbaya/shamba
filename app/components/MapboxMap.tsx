@@ -260,7 +260,7 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
 
     const map = new maplibregl.Map({
       container: containerRef.current,
-      style: baseStyleUrl,
+      style: baseStyleUrl as unknown as maplibregl.Style,
       center: [36.668, -1.248],
       zoom: 12.6,
       pitch: 0,
