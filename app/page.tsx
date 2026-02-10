@@ -10,7 +10,12 @@ import { collection, doc, getDocs, serverTimestamp, setDoc } from "firebase/fire
 export default function Home() {
   const router = useRouter();
   const [remotePlots, setRemotePlots] = useState<Plot[]>([]);
+  const [hydrated, setHydrated] = useState(false);
   const plots: Plot[] = [];
+
+  useEffect(() => {
+    setHydrated(true);
+  }, []);
 
   useEffect(() => {
     const loadListings = async () => {
@@ -200,8 +205,15 @@ export default function Home() {
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,_#f9f1e6,_#f2ede4_55%,_#efe7d8)] text-[#14110f]">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-6 sm:px-6">
         <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#1f3d2d] text-lg font-semibold text-[#f4f1ea]">
-            PT
+          <div
+            className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-2xl bg-[#1f3d2d]"
+            suppressHydrationWarning
+          >
+            {hydrated ? (
+              <img src="/logo.png" alt="PlotTrust logo" className="h-8 w-8" />
+            ) : (
+              <span className="text-lg font-semibold text-[#f4f1ea]">PT</span>
+            )}
           </div>
           <div>
             <p className="text-sm uppercase tracking-[0.3em] text-[#1f3d2d]">
@@ -367,20 +379,11 @@ export default function Home() {
               availableParcels: plot.availableParcels,
               nodes: plot.nodes,
             }))}
+            onFiltersClick={() => setFiltersOpen(true)}
           />
 
           <div className="pointer-events-none absolute left-4 top-4 rounded-full bg-white/80 px-3 py-1 text-xs font-semibold text-[#1f3d2d] backdrop-blur sm:left-6 sm:top-6">
             Western District
-          </div>
-
-          <div className="absolute right-4 top-4 z-30 lg:hidden sm:right-6 sm:top-6">
-            <button
-              type="button"
-              onClick={() => setFiltersOpen(true)}
-              className="rounded-full bg-[#1f3d2d] px-4 py-2 text-xs font-semibold text-white shadow-lg ring-2 ring-white/70"
-            >
-              Filters
-            </button>
           </div>
 
           <div className="mt-4 flex flex-wrap items-center gap-2 text-[11px] text-[#3a2f2a] sm:gap-3 sm:text-xs">

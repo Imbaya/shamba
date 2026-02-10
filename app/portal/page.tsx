@@ -33,6 +33,8 @@ export default function PortalPage() {
   const [portals, setPortals] = useState<PortalSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [portalsLoading, setPortalsLoading] = useState(true);
 
   const [companyName, setCompanyName] = useState("");
   const [companyLocation, setCompanyLocation] = useState("");
@@ -58,6 +60,7 @@ export default function PortalPage() {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (!user) {
         router.push("/");
+        setAuthLoading(false);
         return;
       }
       setUserId(user.uid);
@@ -66,6 +69,7 @@ export default function PortalPage() {
         const data = snap.data() as { name?: string };
         setUserName(data.name ?? "");
       }
+      setAuthLoading(false);
     });
     return () => unsubscribe();
   }, [router]);
@@ -73,6 +77,7 @@ export default function PortalPage() {
   useEffect(() => {
     const loadPortals = async () => {
       if (!userId) return;
+      setPortalsLoading(true);
       const snapshot = await getDocs(
         query(
           collection(db, "vendorPortals"),
@@ -97,6 +102,7 @@ export default function PortalPage() {
         });
       });
       setPortals(items);
+      setPortalsLoading(false);
     };
     loadPortals();
   }, [userId]);
@@ -188,6 +194,35 @@ export default function PortalPage() {
     }
   };
 
+  if (authLoading || portalsLoading) {
+    return (
+      <div className="min-h-screen bg-[radial-gradient(circle_at_top,_#f9f1e6,_#f2ede4_55%,_#efe7d8)] text-[#14110f]">
+        <div className="mx-auto flex min-h-screen max-w-6xl flex-col items-center justify-center px-4 py-10 sm:px-6">
+          <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-3xl bg-[#1f3d2d] shadow-[0_18px_50px_-30px_rgba(20,17,15,0.6)]">
+            <img src="/logo.png" alt="PlotTrust logo" className="h-10 w-10" />
+          </div>
+          <div className="mt-6 text-center">
+            <p className="text-xs uppercase tracking-[0.35em] text-[#c77d4b]">
+              Portal setup
+            </p>
+            <h1 className="mt-2 font-serif text-2xl text-[#14110f] sm:text-3xl">
+              Loading your portals
+            </h1>
+            <p className="mt-2 text-sm text-[#5a4a44]">
+              Fetching your portal data.
+            </p>
+          </div>
+          <div className="mt-6 flex items-center gap-3">
+            <div className="h-10 w-10 animate-spin rounded-full border-2 border-[#d8c7b6] border-t-[#1f3d2d]" />
+            <div className="text-xs text-[#7a5f54]">
+              Syncing portal records
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,_#f9f1e6,_#f2ede4_55%,_#efe7d8)] text-[#14110f]">
       <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
@@ -222,6 +257,15 @@ export default function PortalPage() {
                 className="rounded-full border border-[#eadfce] bg-white px-4 py-2 text-xs font-semibold text-[#1f3d2d]"
               >
                 Register individual portal
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  window.location.href = "/purchases";
+                }}
+                className="rounded-full border border-[#eadfce] bg-white px-4 py-2 text-xs font-semibold text-[#1f3d2d]"
+              >
+                Manage purchases
               </button>
             </div>
           </div>

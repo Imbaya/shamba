@@ -711,8 +711,8 @@ export default function VendorDashboard() {
   const loadingView = (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,_#f9f1e6,_#f2ede4_55%,_#efe7d8)] text-[#14110f]">
       <div className="mx-auto flex min-h-screen max-w-6xl flex-col items-center justify-center px-4 py-10 sm:px-6">
-        <div className="flex h-16 w-16 items-center justify-center rounded-3xl bg-[#1f3d2d] text-xl font-semibold text-[#f4f1ea] shadow-[0_18px_50px_-30px_rgba(20,17,15,0.6)]">
-          PT
+        <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-3xl bg-[#1f3d2d] shadow-[0_18px_50px_-30px_rgba(20,17,15,0.6)]">
+          <img src="/logo.png" alt="PlotTrust logo" className="h-10 w-10" />
         </div>
         <div className="mt-6 text-center">
           <p className="text-xs uppercase tracking-[0.35em] text-[#c77d4b]">
@@ -1114,11 +1114,11 @@ export default function VendorDashboard() {
   const earthRadius = 6371000;
   const minGpsAccuracyMeters = 3;
   const strideLengthMeters = 0.76;
-  const anchorAverageWindowMs = 5000;
-  const beaconSampleWindowMs = 15000;
+  const anchorAverageWindowMs = 30000;
+  const beaconSampleWindowMs = 20000;
   const beaconAccuracyTargetMeters = 2;
-  const beaconTrimRatio = 0.2;
-  const stillnessWindowMs = 1200;
+  const beaconTrimRatio = 0.15;
+  const stillnessWindowMs = 2500;
   const WGS84_RADIUS = 6378137;
 
   const calcSignalStrength = (accuracy?: number) => {
@@ -1665,7 +1665,7 @@ export default function VendorDashboard() {
 
   const startGpsCapture = async (parcelId: number) => {
     if (!navigator.geolocation) {
-      setLocationStatus("GPS not supported on this device.");
+      setLocationStatus("GPS not supported. Use a phone with location access.");
       return;
     }
     await requestMotionPermissions();
@@ -1674,7 +1674,7 @@ export default function VendorDashboard() {
     }
     activeCaptureIdRef.current = parcelId;
     setLocationStatus(
-      `Waiting for GPS accuracy ≤${minGpsAccuracyMeters}m...`
+      `Step 1: Wait for GPS ≤${minGpsAccuracyMeters}m, then start walking.`
     );
     delete anchorSamplesRef.current[parcelId];
     delete kalmanStateRef.current[parcelId];
@@ -1705,10 +1705,12 @@ export default function VendorDashboard() {
         const signalStrength = calcSignalStrength(accuracy);
         setLocationStatus(
           accuracy
-            ? `GPS accuracy ±${Math.round(accuracy)}m · Signal ${Math.round(
+            ? `GPS ±${Math.round(
+                accuracy
+              )}m · Signal ${Math.round(
                 signalStrength
-              )}%`
-            : "GPS signal acquired"
+              )}% · Keep walking to record.`
+            : "GPS signal acquired. Keep walking to record."
         );
         const nextPoint = {
           lat: pos.coords.latitude,
@@ -1873,7 +1875,7 @@ export default function VendorDashboard() {
         });
       },
       () => {
-        setLocationStatus("Unable to read GPS. Try moving to open sky.");
+        setLocationStatus("GPS error. Move to open sky and try again.");
       },
       { enableHighAccuracy: true, maximumAge: 1000, timeout: 15000 }
     );
@@ -1908,19 +1910,19 @@ export default function VendorDashboard() {
 
   const lockAnchorManually = (parcelId: number) => {
     if (!navigator.geolocation) {
-      setLocationStatus("Geolocation not supported.");
+      setLocationStatus("Geolocation not supported. Use a phone with GPS.");
       return;
     }
-    setLocationStatus("Locking anchor point (averaging 5s)...");
+    setLocationStatus("Locking anchor... stand still for 30s.");
     const samples: { lat: number; lng: number }[] = [];
     const watchId = navigator.geolocation.watchPosition(
       (pos) => {
         const accuracy = pos.coords.accuracy ?? 0;
         if (accuracy > minGpsAccuracyMeters) {
           setLocationStatus(
-            `Anchor needs ≤${minGpsAccuracyMeters}m accuracy (now ±${Math.round(
+            `Anchor needs ≤${minGpsAccuracyMeters}m (now ±${Math.round(
               accuracy
-            )}m)`
+            )}m). Move to open sky.`
           );
           return;
         }
@@ -1946,15 +1948,15 @@ export default function VendorDashboard() {
         );
       },
       () => {
-        setLocationStatus("Unable to lock anchor. Check permissions.");
+        setLocationStatus("Anchor failed. Allow GPS permissions and retry.");
       },
       { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
     );
-    setLocationStatus("Anchor averaging... keep still for 5s.");
+    setLocationStatus("Anchor averaging... keep still.");
     window.setTimeout(() => {
       navigator.geolocation.clearWatch(watchId);
       if (!samples.length) {
-        setLocationStatus("No reliable fix yet. Try again.");
+        setLocationStatus("No reliable fix. Stand still and retry.");
         return;
       }
       const avg = samples.reduce(
@@ -1989,7 +1991,7 @@ export default function VendorDashboard() {
             : item
         )
       );
-      setLocationStatus("Anchor locked.");
+      setLocationStatus("Anchor locked. You can start capturing corners.");
     }, anchorAverageWindowMs);
   };
 
@@ -2075,9 +2077,9 @@ export default function VendorDashboard() {
   ) => {
     let score = 100;
     if (samples < 120) score -= (120 - samples) * 0.25;
-    if (lagSeconds > 5) score -= (lagSeconds - 5) * 2;
+    if (lagSeconds > 5) score -= (lagSeconds - 5) * 0.3;
     if (hdop > 1.5) score -= (hdop - 1.5) * 10;
-    if (distanceKm > 1) score -= (distanceKm - 1) * 5;
+    if (distanceKm > 1) score -= (distanceKm - 1) * 3;
     return Math.max(0, Math.min(100, Math.round(score)));
   };
 
@@ -2308,14 +2310,14 @@ export default function VendorDashboard() {
 
   const captureCorner = (parcelId: number) => {
     if (!navigator.geolocation) {
-      setLocationStatus("GPS not supported on this device.");
+      setLocationStatus("GPS not supported. Use a phone with GPS.");
       return;
     }
     const existing = cornerSampleRef.current[parcelId];
     if (existing?.watchId !== null && existing?.watchId !== undefined) {
       navigator.geolocation.clearWatch(existing.watchId);
     }
-    setLocationStatus("Sampling corner... stand still.");
+    setLocationStatus("Step 2: Stand still. Sampling corner for 20s.");
     cornerSampleRef.current[parcelId] = {
       start: Date.now(),
       samples: [],
@@ -2349,7 +2351,7 @@ export default function VendorDashboard() {
           if (entry) {
             entry.rejectedMotion += 1;
           }
-          setLocationStatus("Hold still... motion detected.");
+          setLocationStatus("Hold still. Motion detected — pause and retry.");
           return;
         }
         if (accuracy > beaconAccuracyTargetMeters) {
@@ -2379,7 +2381,7 @@ export default function VendorDashboard() {
                 rawSample
               ) / 1000
             : 0;
-          const hdopProxy = Math.max(0.8, accuracy / 1.5);
+          const hdopProxy = Math.max(0.8, accuracy / 2);
           const hri = calculateHri(
             entry.samples.length,
             lagSeconds,
@@ -2402,7 +2404,7 @@ export default function VendorDashboard() {
         }
       },
       () => {
-        setLocationStatus("Unable to read GPS. Try moving to open sky.");
+        setLocationStatus("GPS error. Move to open sky and try again.");
       },
       { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
     );
@@ -2430,15 +2432,15 @@ export default function VendorDashboard() {
       if (!averaged) {
         if (entry.received === 0) {
           setLocationStatus(
-            "No GPS samples received. Check permissions or move to open sky."
+            "No GPS samples. Allow location permission and move to open sky."
           );
         } else if (entry.samples.length === 0 && entry.rejectedMotion > 0) {
           setLocationStatus(
-            "Too much motion detected during sampling. Stand still and retry."
+            "Too much motion. Stand still at the corner and retry."
           );
         } else {
           setLocationStatus(
-            "Signal too noisy to average. Try again with clearer sky."
+            "Signal noisy. Try again with clearer sky."
           );
         }
         setSubParcels((current) =>
@@ -2482,7 +2484,7 @@ export default function VendorDashboard() {
           };
         })
       );
-      setLocationStatus("Corner captured.");
+      setLocationStatus("Corner saved. Move to the next beacon.");
       delete cornerSampleRef.current[parcelId];
     }, beaconSampleWindowMs);
     cornerSampleRef.current[parcelId].timeoutId = timeoutId;
@@ -5516,19 +5518,19 @@ export default function VendorDashboard() {
                   </p>
                   <ul className="mt-3 space-y-2 text-xs">
                     <li>
-                      Stand at the beacon (corner post) and tap "Capture corner".
+                      Step 1: (Optional) Start anchor, then go to a beacon.
                     </li>
                     <li>
-                      Stay still while the app samples GPS for 15 seconds.
+                      Step 2: Tap "Capture corner" while standing on the beacon.
                     </li>
                     <li>
-                      Repeat for each corner (Beacon 1, 2, 3, 4...).
+                      Step 3: Stay still for 20 seconds while sampling.
                     </li>
                     <li>
-                      The app connects captured corners with straight lines.
+                      Step 4: Move to the next beacon and repeat.
                     </li>
                     <li>
-                      Review the boundary. If it looks wrong, recapture.
+                      Step 5: Tap "Done · Preview" to review the boundary.
                     </li>
                   </ul>
                   {locationStatus && (
@@ -5562,7 +5564,7 @@ export default function VendorDashboard() {
                           />
                           <p className="text-xs text-[#5a4a44]">
                             {parcel.samplingCorner
-                              ? "Sampling corner..."
+                              ? "Sampling... keep still"
                               : "Ready to capture"}
                           </p>
                         </div>
@@ -5573,7 +5575,7 @@ export default function VendorDashboard() {
                             className="rounded-full bg-[#1f3d2d] px-4 py-2 text-xs font-semibold text-white"
                             disabled={parcel.samplingCorner}
                           >
-                            Capture corner
+                            {parcel.samplingCorner ? "Sampling..." : "Capture corner"}
                           </button>
                           <button
                             type="button"
@@ -5593,6 +5595,13 @@ export default function VendorDashboard() {
                             </button>
                           )}
                         </div>
+                        <p className="text-[11px] text-[#7a5f54]">
+                          {parcel.samplingCorner
+                            ? "Next: Stay still until sampling completes."
+                            : parcel.cleanPath.length >= 3
+                              ? "Next: Tap Done · Preview to review the shape."
+                              : "Next: Move to the next beacon and capture."}
+                        </p>
                       </div>
                       {parcel.previewOpen && (
                         <div className="mt-4 rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-4 py-4">

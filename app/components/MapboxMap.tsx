@@ -28,9 +28,10 @@ export type Plot = {
 };
 type MapboxMapProps = {
   plots: Plot[];
+  onFiltersClick?: () => void;
 };
 
-export default function MapboxMap({ plots }: MapboxMapProps) {
+export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markerRef = useRef<maplibregl.Marker[]>([]);
@@ -457,8 +458,8 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
   }, [hasSatellite, mapboxSatelliteStyle, fallbackStyleUrl]);
 
   return (
-    <div className="relative h-[65vh] min-h-[420px] w-full overflow-hidden rounded-[24px] border border-[#eadfce] bg-[#e8dccb] shadow-[0_30px_70px_-45px_rgba(20,17,15,0.55)] sm:min-h-[520px] md:h-[720px] md:rounded-[32px]">
-      <div className="absolute left-5 top-5 z-10 flex flex-wrap gap-2 rounded-full bg-white/90 px-3 py-2 text-xs font-semibold text-[#1f3d2d] shadow-sm backdrop-blur">
+    <div className="relative h-[55vh] min-h-[360px] w-full overflow-hidden rounded-[20px] border border-[#eadfce] bg-[#e8dccb] shadow-[0_30px_70px_-45px_rgba(20,17,15,0.55)] sm:h-[65vh] sm:min-h-[520px] md:h-[720px] md:rounded-[32px]">
+      <div className="absolute left-3 top-3 z-10 flex flex-wrap gap-2 rounded-full bg-white/90 px-2 py-2 text-[10px] font-semibold text-[#1f3d2d] shadow-sm backdrop-blur sm:left-5 sm:top-5 sm:px-3 sm:py-2 sm:text-xs">
         <button
           type="button"
           onClick={() => setIs3D((value) => !value)}
@@ -472,8 +473,11 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
           Satellite
         </span>
       </div>
-      <div className="absolute right-5 top-5 z-10 w-[220px] rounded-2xl border border-[#eadfce] bg-white/95 p-2 text-[11px] shadow-sm backdrop-blur">
-        <div className="flex items-center gap-2">
+      <div className="absolute right-3 top-3 z-10 w-[180px] rounded-2xl border border-[#eadfce] bg-white/95 p-2 text-[10px] shadow-sm backdrop-blur sm:right-5 sm:top-5 sm:w-[240px] sm:text-[11px]">
+        <div
+          className="flex flex-col gap-2 sm:flex-row sm:items-center"
+          suppressHydrationWarning
+        >
           <input
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
@@ -483,7 +487,7 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
               }
             }}
             placeholder="Search places"
-            className="w-full rounded-full border border-[#eadfce] bg-white px-3 py-2 text-[11px] text-[#14110f]"
+            className="w-full rounded-full border border-[#eadfce] bg-white px-2 py-2 text-[10px] text-[#14110f] sm:px-3 sm:text-[11px]"
           />
           <button
             type="button"
@@ -493,12 +497,19 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
           >
             {searchLoading ? "..." : "Go"}
           </button>
+          <button
+            type="button"
+            onClick={onFiltersClick}
+            className="w-full rounded-full border border-[#eadfce] bg-white px-3 py-2 text-[10px] font-semibold text-[#5a4a44] sm:hidden"
+          >
+            Filters
+          </button>
         </div>
         {searchError && (
           <p className="mt-2 text-[10px] text-[#b3261e]">{searchError}</p>
         )}
         {searchResults.length > 0 && (
-          <div className="mt-2 max-h-40 overflow-auto rounded-xl border border-[#eadfce] bg-white">
+          <div className="mt-2 max-h-36 overflow-auto rounded-xl border border-[#eadfce] bg-white">
             {searchResults.map((result) => (
               <button
                 key={result.id}
