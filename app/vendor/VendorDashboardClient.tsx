@@ -1115,10 +1115,10 @@ export default function VendorDashboard() {
   const minGpsAccuracyMeters = 3;
   const strideLengthMeters = 0.76;
   const anchorAverageWindowMs = 30000;
-  const beaconSampleWindowMs = 20000;
+  const beaconSampleWindowMs = 30000;
   const beaconAccuracyTargetMeters = 2;
-  const beaconTrimRatio = 0.15;
-  const stillnessWindowMs = 2500;
+  const beaconTrimRatio = 0.2;
+  const stillnessWindowMs = 3000;
   const WGS84_RADIUS = 6378137;
 
   const calcSignalStrength = (accuracy?: number) => {
@@ -2354,6 +2354,14 @@ export default function VendorDashboard() {
           setLocationStatus("Hold still. Motion detected — pause and retry.");
           return;
         }
+        if (accuracy > 8) {
+          setLocationStatus(
+            `Accuracy ±${Math.round(
+              accuracy
+            )}m is too weak. Wait for ≤8m before sampling.`
+          );
+          return;
+        }
         if (accuracy > beaconAccuracyTargetMeters) {
           setLocationStatus(
             `Low accuracy (±${Math.round(
@@ -3040,15 +3048,6 @@ export default function VendorDashboard() {
             disabled={!canViewLeads}
           >
             Export leads
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              window.location.href = "/purchases";
-            }}
-            className="rounded-full border border-[#eadfce] px-4 py-2 text-[#5a4a44] transition hover:border-[#c9b8a6]"
-          >
-            Manage purchases
           </button>
           {canCreateListings && (
             <button
@@ -5524,7 +5523,7 @@ export default function VendorDashboard() {
                       Step 2: Tap "Capture corner" while standing on the beacon.
                     </li>
                     <li>
-                      Step 3: Stay still for 20 seconds while sampling.
+                      Step 3: Stay still for 30 seconds while sampling.
                     </li>
                     <li>
                       Step 4: Move to the next beacon and repeat.

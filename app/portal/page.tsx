@@ -241,6 +241,15 @@ export default function PortalPage() {
               <button
                 type="button"
                 onClick={() => {
+                  router.push("/");
+                }}
+                className="rounded-full border border-[#eadfce] bg-white px-4 py-2 text-xs font-semibold text-[#1f3d2d]"
+              >
+                Home
+              </button>
+              <button
+                type="button"
+                onClick={() => {
                   setShowCompanyForm(true);
                   setShowIndividualForm(false);
                 }}
