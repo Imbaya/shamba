@@ -48,6 +48,11 @@ export default function PortalPage() {
   const [individualPhone, setIndividualPhone] = useState("");
   const [showCompanyForm, setShowCompanyForm] = useState(false);
   const [showIndividualForm, setShowIndividualForm] = useState(false);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    setHydrated(true);
+  }, []);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -272,9 +277,9 @@ export default function PortalPage() {
           <div className="space-y-6">
 
             <div
-              className={`rounded-3xl border border-[#eadfce] bg-white p-5 ${
-                showCompanyForm ? "block" : "hidden"
-              } lg:block`}
+              className={`hidden rounded-3xl border border-[#eadfce] bg-white p-5 ${
+                hydrated && showCompanyForm ? "lg:block" : "lg:hidden"
+              }`}
             >
               <div className="flex items-start justify-between">
                 <p className="text-xs uppercase tracking-[0.3em] text-[#a67047]">
@@ -317,6 +322,9 @@ export default function PortalPage() {
                   placeholder="Website (optional)"
                   className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
                 />
+                <label className="text-[11px] font-semibold text-[#5a4a44]">
+                  Company registration document
+                </label>
                 <input
                   type="file"
                   accept="application/pdf,image/*"
@@ -325,6 +333,9 @@ export default function PortalPage() {
                   }
                   className="text-xs text-[#5a4a44] file:mr-3 file:rounded-full file:border-0 file:bg-[#c77d4b] file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white"
                 />
+                <label className="text-[11px] font-semibold text-[#5a4a44]">
+                  Company logo (image)
+                </label>
                 <input
                   type="file"
                   accept="image/*"
@@ -345,9 +356,9 @@ export default function PortalPage() {
             </div>
 
             <div
-              className={`rounded-3xl border border-[#eadfce] bg-white p-5 ${
-                showIndividualForm ? "block" : "hidden"
-              } lg:block`}
+              className={`hidden rounded-3xl border border-[#eadfce] bg-white p-5 ${
+                hydrated && showIndividualForm ? "lg:block" : "lg:hidden"
+              }`}
             >
               <div className="flex items-start justify-between">
                 <p className="text-xs uppercase tracking-[0.3em] text-[#a67047]">
@@ -394,6 +405,135 @@ export default function PortalPage() {
               </div>
             </div>
           </div>
+
+          {showCompanyForm && (
+            <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6 lg:hidden">
+              <div className="w-full max-w-lg overflow-hidden rounded-3xl border border-[#eadfce] bg-white p-5 shadow-[0_30px_70px_-40px_rgba(20,17,15,0.6)]">
+                <div className="flex items-start justify-between">
+                  <p className="text-xs uppercase tracking-[0.3em] text-[#a67047]">
+                    Register company portal
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setShowCompanyForm(false)}
+                    className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#5a4a44]"
+                  >
+                    Close
+                  </button>
+                </div>
+                <div className="mt-4 grid gap-3 text-sm">
+                  <input
+                    type="text"
+                    value={companyName}
+                    onChange={(event) => setCompanyName(event.target.value)}
+                    placeholder="Company name"
+                    className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                  />
+                  <input
+                    type="text"
+                    value={companyLocation}
+                    onChange={(event) => setCompanyLocation(event.target.value)}
+                    placeholder="Location"
+                    className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                  />
+                  <input
+                    type="tel"
+                    value={companyPhone}
+                    onChange={(event) => setCompanyPhone(event.target.value)}
+                    placeholder="Phone (optional)"
+                    className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                  />
+                  <input
+                    type="url"
+                    value={companyWebsite}
+                    onChange={(event) => setCompanyWebsite(event.target.value)}
+                  placeholder="Website (optional)"
+                  className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                />
+                <label className="text-[11px] font-semibold text-[#5a4a44]">
+                  Company registration document
+                </label>
+                <input
+                  type="file"
+                  accept="application/pdf,image/*"
+                  onChange={(event) =>
+                    setCompanyCertificate(event.target.files?.[0] ?? null)
+                  }
+                  className="text-xs text-[#5a4a44] file:mr-3 file:rounded-full file:border-0 file:bg-[#c77d4b] file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white"
+                />
+                <label className="text-[11px] font-semibold text-[#5a4a44]">
+                  Company logo (image)
+                </label>
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={(event) =>
+                    setCompanyLogo(event.target.files?.[0] ?? null)
+                    }
+                    className="text-xs text-[#5a4a44] file:mr-3 file:rounded-full file:border-0 file:bg-[#eadfce] file:px-3 file:py-2 file:text-xs file:font-semibold file:text-[#5a4a44]"
+                  />
+                  <button
+                    type="button"
+                    disabled={loading}
+                    onClick={() => createPortal("company")}
+                    className="rounded-full bg-[#1f3d2d] px-4 py-2 text-xs font-semibold text-white"
+                  >
+                    {loading ? "Creating..." : "Create company portal"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showIndividualForm && (
+            <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6 lg:hidden">
+              <div className="w-full max-w-lg overflow-hidden rounded-3xl border border-[#eadfce] bg-white p-5 shadow-[0_30px_70px_-40px_rgba(20,17,15,0.6)]">
+                <div className="flex items-start justify-between">
+                  <p className="text-xs uppercase tracking-[0.3em] text-[#a67047]">
+                    Register individual portal
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setShowIndividualForm(false)}
+                    className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#5a4a44]"
+                  >
+                    Close
+                  </button>
+                </div>
+                <div className="mt-4 grid gap-3 text-sm">
+                  <input
+                    type="text"
+                    value={individualName}
+                    onChange={(event) => setIndividualName(event.target.value)}
+                    placeholder="Portal name"
+                    className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                  />
+                  <input
+                    type="text"
+                    value={individualLocation}
+                    onChange={(event) => setIndividualLocation(event.target.value)}
+                    placeholder="Location"
+                    className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                  />
+                  <input
+                    type="tel"
+                    value={individualPhone}
+                    onChange={(event) => setIndividualPhone(event.target.value)}
+                    placeholder="Phone (optional)"
+                    className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                  />
+                  <button
+                    type="button"
+                    disabled={loading}
+                    onClick={() => createPortal("individual")}
+                    className="rounded-full bg-[#1f3d2d] px-4 py-2 text-xs font-semibold text-white"
+                  >
+                    {loading ? "Creating..." : "Create individual portal"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

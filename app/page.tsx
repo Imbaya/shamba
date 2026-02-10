@@ -221,7 +221,7 @@ export default function Home() {
             className="rounded-full bg-[#1f3d2d] px-5 py-2 text-[#f7f3ea] transition hover:bg-[#173124]"
             onClick={() => setSignupOpen(true)}
           >
-            List a plot
+            Register
           </button>
         </div>
       </div>
@@ -236,7 +236,7 @@ export default function Home() {
           className="flex-1 rounded-full bg-[#1f3d2d] px-4 py-2 text-sm font-semibold text-[#f7f3ea] transition hover:bg-[#173124]"
           onClick={() => setSignupOpen(true)}
         >
-          List a plot
+          Register
         </button>
       </div>
 

@@ -36,7 +36,6 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
   const markerRef = useRef<maplibregl.Marker[]>([]);
   const startMarkerRef = useRef<maplibregl.Marker | null>(null);
   const [is3D, setIs3D] = useState(false);
-  const [isSatellite, setIsSatellite] = useState(false);
   const [activePlot, setActivePlot] = useState<Plot | null>(null);
   const [streetViewOpen, setStreetViewOpen] = useState(false);
   const [streetViewStep, setStreetViewStep] = useState(0);
@@ -55,23 +54,122 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
   const [inquiryMessage, setInquiryMessage] = useState("");
   const [inquirySaving, setInquirySaving] = useState(false);
   const [inquiryError, setInquiryError] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<
+    { id: string; place_name: string; center: [number, number] }[]
+  >([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
 
   const streetNodes = useMemo(
     () =>
       activePlot?.nodes?.filter((node) => node.imageUrl) ?? [],
     [activePlot]
   );
-  const mapTilerKey = process.env.NEXT_PUBLIC_MAPTILER_KEY;
-  const hasSatellite = Boolean(
-    mapTilerKey && mapTilerKey !== "YOUR_MAPTILER_KEY"
-  );
+  const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
+  const hasSatellite = Boolean(mapboxToken);
   const fallbackStyleUrl =
     "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
+  const mapboxSatelliteStyle = useMemo(
+    () =>
+      ({
+        version: 8,
+        sources: {
+          "mapbox-satellite": {
+            type: "raster",
+            tiles: mapboxToken
+              ? [
+                  `https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}.jpg?access_token=${mapboxToken}`,
+                ]
+              : [],
+            tileSize: 256,
+            attribution: "© Mapbox © OpenStreetMap",
+          },
+          "mapbox-labels": {
+            type: "vector",
+            tiles: mapboxToken
+              ? [
+                  `https://api.mapbox.com/v4/mapbox.mapbox-streets-v8/{z}/{x}/{y}.vector.pbf?access_token=${mapboxToken}`,
+                ]
+              : [],
+          },
+        },
+        glyphs: mapboxToken
+          ? `https://api.mapbox.com/fonts/v1/mapbox/{fontstack}/{range}.pbf?access_token=${mapboxToken}`
+          : undefined,
+      layers: [
+        {
+          id: "satellite",
+          type: "raster",
+          source: "mapbox-satellite",
+        },
+        {
+          id: "place-labels",
+          type: "symbol",
+          source: "mapbox-labels",
+          "source-layer": "place_label",
+          layout: {
+            "text-field": ["coalesce", ["get", "name_en"], ["get", "name"]],
+            "text-size": 12,
+            "text-optional": true,
+          },
+          paint: {
+            "text-color": "#1f3d2d",
+            "text-halo-color": "#f7f3ea",
+            "text-halo-width": 1,
+          },
+        },
+        {
+          id: "poi-labels",
+          type: "symbol",
+          source: "mapbox-labels",
+          "source-layer": "poi_label",
+          layout: {
+            "text-field": ["coalesce", ["get", "name_en"], ["get", "name"]],
+            "text-size": 11,
+            "text-optional": true,
+          },
+          paint: {
+            "text-color": "#3a2f2a",
+            "text-halo-color": "#f7f3ea",
+            "text-halo-width": 1,
+          },
+        },
+      ],
+    }) as const,
+    [mapboxToken]
+  );
 
   const visiblePlots = useMemo(
     () => (activePlot ? [activePlot] : plots),
     [activePlot, plots]
   );
+
+  const runSearch = async () => {
+    const trimmed = searchQuery.trim();
+    if (!trimmed || !mapboxToken) return;
+    setSearchLoading(true);
+    setSearchError(null);
+    try {
+      const response = await fetch(
+        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(
+          trimmed
+        )}.json?access_token=${mapboxToken}&limit=5`
+      );
+      if (!response.ok) {
+        throw new Error("Search failed");
+      }
+      const data = (await response.json()) as {
+        features?: { id: string; place_name: string; center: [number, number] }[];
+      };
+      setSearchResults(data.features ?? []);
+    } catch {
+      setSearchError("Search failed. Try again.");
+      setSearchResults([]);
+    } finally {
+      setSearchLoading(false);
+    }
+  };
 
   const geojson = useMemo(
     () => ({
@@ -158,9 +256,7 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
 
-    const baseStyleUrl = hasSatellite
-      ? `https://api.maptiler.com/maps/streets-v2/style.json?key=${mapTilerKey}`
-      : fallbackStyleUrl;
+    const baseStyleUrl = hasSatellite ? mapboxSatelliteStyle : fallbackStyleUrl;
 
     const map = new maplibregl.Map({
       container: containerRef.current,
@@ -354,14 +450,10 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
   useEffect(() => {
     if (!mapRef.current) return;
     const baseStyleUrl = hasSatellite
-      ? `https://api.maptiler.com/maps/streets-v2/style.json?key=${mapTilerKey}`
+      ? (mapboxSatelliteStyle as unknown as maplibregl.StyleSpecification)
       : fallbackStyleUrl;
-    mapRef.current.setStyle(
-      isSatellite && hasSatellite
-        ? `https://api.maptiler.com/maps/hybrid/style.json?key=${mapTilerKey}`
-        : baseStyleUrl
-    );
-  }, [hasSatellite, isSatellite, mapTilerKey]);
+    mapRef.current.setStyle(baseStyleUrl);
+  }, [hasSatellite, mapboxSatelliteStyle, fallbackStyleUrl]);
 
   return (
     <div className="relative h-[65vh] min-h-[420px] w-full overflow-hidden rounded-[24px] border border-[#eadfce] bg-[#e8dccb] shadow-[0_30px_70px_-45px_rgba(20,17,15,0.55)] sm:min-h-[520px] md:h-[720px] md:rounded-[32px]">
@@ -375,16 +467,61 @@ export default function MapboxMap({ plots }: MapboxMapProps) {
         >
           {is3D ? "3D view" : "2D view"}
         </button>
-        <button
-          type="button"
-          onClick={() => setIsSatellite((value) => !value)}
-          className={`rounded-full px-3 py-1 transition ${
-            isSatellite ? "bg-[#c77d4b] text-white" : "text-[#6b3e1e]"
-          } ${!hasSatellite ? "cursor-not-allowed opacity-50" : ""}`}
-          disabled={!hasSatellite}
-        >
+        <span className="rounded-full bg-[#c77d4b] px-3 py-1 text-white">
           Satellite
-        </button>
+        </span>
+      </div>
+      <div className="absolute right-5 top-5 z-10 w-[220px] rounded-2xl border border-[#eadfce] bg-white/95 p-2 text-[11px] shadow-sm backdrop-blur">
+        <div className="flex items-center gap-2">
+          <input
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                runSearch();
+              }
+            }}
+            placeholder="Search places"
+            className="w-full rounded-full border border-[#eadfce] bg-white px-3 py-2 text-[11px] text-[#14110f]"
+          />
+          <button
+            type="button"
+            onClick={runSearch}
+            disabled={!mapboxToken || searchLoading}
+            className="rounded-full bg-[#1f3d2d] px-3 py-2 text-[10px] font-semibold text-white disabled:opacity-60"
+          >
+            {searchLoading ? "..." : "Go"}
+          </button>
+        </div>
+        {searchError && (
+          <p className="mt-2 text-[10px] text-[#b3261e]">{searchError}</p>
+        )}
+        {searchResults.length > 0 && (
+          <div className="mt-2 max-h-40 overflow-auto rounded-xl border border-[#eadfce] bg-white">
+            {searchResults.map((result) => (
+              <button
+                key={result.id}
+                type="button"
+                onClick={() => {
+                  setSearchResults([]);
+                  mapRef.current?.flyTo({
+                    center: result.center,
+                    zoom: 16,
+                    duration: 800,
+                  });
+                }}
+                className="block w-full border-b border-[#f1e6d7] px-3 py-2 text-left text-[10px] text-[#5a4a44] hover:bg-[#fbf8f3]"
+              >
+                {result.place_name}
+              </button>
+            ))}
+          </div>
+        )}
+        {!mapboxToken && (
+          <p className="mt-2 text-[10px] text-[#7a5f54]">
+            Add Mapbox token to search.
+          </p>
+        )}
       </div>
       <div ref={containerRef} className="h-full w-full" />
 

@@ -22,8 +22,18 @@ import {
   updateDoc,
   where,
 } from "firebase/firestore";
-import { auth, db, storage } from "../../lib/firebase";
+import { auth, db, realtimeDb, storage } from "../../lib/firebase";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
+import {
+  onValue,
+  ref as dbRef,
+  set as dbSet,
+  off as dbOff,
+  remove,
+  push,
+  query as dbQuery,
+  limitToLast,
+} from "firebase/database";
 
 type VendorPlot = {
   id: string;
@@ -78,6 +88,18 @@ type MemberPermissions = {
   view_inquiries?: boolean;
   view_leads?: boolean;
   manage_members?: boolean;
+};
+
+type AnchorPayload = {
+  sessionId: string;
+  measuredLat: number;
+  measuredLng: number;
+  deltaNorth: number;
+  deltaEast: number;
+  lat: number;
+  lng: number;
+  accuracy: number;
+  timestamp: number;
 };
 
 type SoldListing = {
@@ -231,6 +253,7 @@ export default function VendorDashboard() {
       cornerConfidences?: number[];
       lastCornerConfidence?: number;
       overallConfidence?: number;
+      cornerHri?: number;
     }[]
   >([
     {
@@ -253,6 +276,7 @@ export default function VendorDashboard() {
       cornerConfidences: [],
       lastCornerConfidence: 0,
       overallConfidence: 0,
+      cornerHri: 0,
     },
   ]);
   const [locationStatus, setLocationStatus] = useState<string | null>(null);
@@ -270,9 +294,15 @@ export default function VendorDashboard() {
       polygon: [number, number][];
     }[]
   >([]);
+  const anchorMapRef = useRef<HTMLDivElement | null>(null);
+  const anchorMapInstanceRef = useRef<maplibregl.Map | null>(null);
+  const anchorMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const anchorWatchRef = useRef<number | null>(null);
+  const anchorDbRef = useRef<ReturnType<typeof dbRef> | null>(null);
   const headingRef = useRef<number | null>(null);
   const stepsRef = useRef(0);
   const lastStepTimeRef = useRef(0);
+  const lastMotionTimeRef = useRef(0);
   const stepsUsedRef = useRef<Record<number, number>>({});
   const anchorSamplesRef = useRef<
     Record<number, { start: number; samples: { lat: number; lng: number }[] }>
@@ -299,6 +329,8 @@ export default function VendorDashboard() {
         watchId: number | null;
         lastAccuracy?: number;
         timeoutId?: number;
+        received: number;
+        rejectedMotion: number;
       }
     >
   >({});
@@ -340,6 +372,30 @@ export default function VendorDashboard() {
   const [editingRole, setEditingRole] = useState<"admin" | "member">("member");
   const [editingPerms, setEditingPerms] = useState<MemberPermissions>({});
   const [memberUpdating, setMemberUpdating] = useState(false);
+  const [anchorSessionId, setAnchorSessionId] = useState<string | null>(null);
+  const [anchorActive, setAnchorActive] = useState(false);
+  const [anchorData, setAnchorData] = useState<AnchorPayload | null>(null);
+  const [anchorStatus, setAnchorStatus] = useState<string | null>(null);
+  const [anchorTrueCoord, setAnchorTrueCoord] = useState<{
+    lat: number;
+    lng: number;
+  } | null>(null);
+  const [anchorMapOpen, setAnchorMapOpen] = useState(false);
+  const [anchorInputSessionId, setAnchorInputSessionId] = useState("");
+  const [anchorSearchQuery, setAnchorSearchQuery] = useState("");
+  const [anchorSearchResults, setAnchorSearchResults] = useState<
+    { id: string; place_name: string; center: [number, number] }[]
+  >([]);
+  const [anchorSearchLoading, setAnchorSearchLoading] = useState(false);
+  const [anchorSearchError, setAnchorSearchError] = useState<string | null>(
+    null
+  );
+  const [mapSearchQuery, setMapSearchQuery] = useState("");
+  const [mapSearchResults, setMapSearchResults] = useState<
+    { id: string; place_name: string; center: [number, number] }[]
+  >([]);
+  const [mapSearchLoading, setMapSearchLoading] = useState(false);
+  const [mapSearchError, setMapSearchError] = useState<string | null>(null);
   const [searchVisible, setSearchVisible] = useState({
     active: false,
     drafts: false,
@@ -358,10 +414,72 @@ export default function VendorDashboard() {
     sales: "",
     members: "",
   });
-  const mapTilerKey = process.env.NEXT_PUBLIC_MAPTILER_KEY;
-  const mapPreviewStyleUrl = mapTilerKey
-    ? `https://api.maptiler.com/maps/streets-v2/style.json?key=${mapTilerKey}`
-    : "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
+  const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
+  const mapPreviewStyle = useMemo(
+    () =>
+      mapboxToken
+        ? ({
+            version: 8,
+            sources: {
+              "mapbox-satellite": {
+                type: "raster",
+                tiles: [
+                  `https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}.jpg?access_token=${mapboxToken}`,
+                ],
+                tileSize: 256,
+                attribution: "© Mapbox © OpenStreetMap",
+              },
+              "mapbox-labels": {
+                type: "vector",
+                tiles: [
+                  `https://api.mapbox.com/v4/mapbox.mapbox-streets-v8/{z}/{x}/{y}.vector.pbf?access_token=${mapboxToken}`,
+                ],
+              },
+            },
+            glyphs: `https://api.mapbox.com/fonts/v1/mapbox/{fontstack}/{range}.pbf?access_token=${mapboxToken}`,
+            layers: [
+              {
+                id: "satellite",
+                type: "raster",
+                source: "mapbox-satellite",
+              },
+              {
+                id: "place-labels",
+                type: "symbol",
+                source: "mapbox-labels",
+                "source-layer": "place_label",
+                layout: {
+                  "text-field": ["coalesce", ["get", "name_en"], ["get", "name"]],
+                  "text-size": 12,
+                  "text-optional": true,
+                },
+                paint: {
+                  "text-color": "#1f3d2d",
+                  "text-halo-color": "#f7f3ea",
+                  "text-halo-width": 1,
+                },
+              },
+              {
+                id: "poi-labels",
+                type: "symbol",
+                source: "mapbox-labels",
+                "source-layer": "poi_label",
+                layout: {
+                  "text-field": ["coalesce", ["get", "name_en"], ["get", "name"]],
+                  "text-size": 11,
+                  "text-optional": true,
+                },
+                paint: {
+                  "text-color": "#3a2f2a",
+                  "text-halo-color": "#f7f3ea",
+                  "text-halo-width": 1,
+                },
+              },
+            ],
+          }) as const
+        : "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
+    [mapboxToken]
+  );
 
   const getActiveVendorId = () => vendorId ?? auth.currentUser?.uid ?? null;
 
@@ -500,6 +618,43 @@ export default function VendorDashboard() {
       manage_members: true,
     });
   }, [portalId]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const stored = window.localStorage.getItem("activeAnchorSessionId");
+    if (stored) {
+      setAnchorSessionId(stored);
+      setAnchorInputSessionId(stored);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!portalId || !anchorSessionId) {
+      setAnchorData(null);
+      return;
+    }
+    const refPath = dbRef(
+      realtimeDb,
+      `anchor_telemetry/${portalId}/${anchorSessionId}`
+    );
+    anchorDbRef.current = refPath;
+    const lastQuery = dbQuery(refPath, limitToLast(1));
+    const handler = onValue(lastQuery, (snap) => {
+      const data = snap.val() as Record<string, AnchorPayload> | null;
+      if (data) {
+        const last = Object.values(data)[0];
+        setAnchorData(last ?? null);
+      } else {
+        setAnchorData(null);
+      }
+    });
+    return () => {
+      dbOff(refPath);
+      if (typeof handler === "function") {
+        handler();
+      }
+    };
+  }, [anchorSessionId, portalId]);
 
   const portalDisplayName = hydrated
     ? vendorProfile?.name ?? "Portal"
@@ -781,6 +936,9 @@ export default function VendorDashboard() {
       const z = acc.z ?? 0;
       const magnitude = Math.sqrt(x * x + y * y + z * z);
       const now = Date.now();
+      if (magnitude > 12.2) {
+        lastMotionTimeRef.current = now;
+      }
       if (magnitude > 12.5 && now - lastStepTimeRef.current > 350) {
         stepsRef.current += 1;
         lastStepTimeRef.current = now;
@@ -954,10 +1112,14 @@ export default function VendorDashboard() {
   };
 
   const earthRadius = 6371000;
-  const minGpsAccuracyMeters = 8;
+  const minGpsAccuracyMeters = 3;
   const strideLengthMeters = 0.76;
   const anchorAverageWindowMs = 5000;
-  const beaconSampleWindowMs = 30000;
+  const beaconSampleWindowMs = 15000;
+  const beaconAccuracyTargetMeters = 2;
+  const beaconTrimRatio = 0.2;
+  const stillnessWindowMs = 1200;
+  const WGS84_RADIUS = 6378137;
 
   const calcSignalStrength = (accuracy?: number) => {
     if (!accuracy || accuracy <= 0) return 0;
@@ -1290,7 +1452,10 @@ export default function VendorDashboard() {
     if (!mapPreviewInstanceRef.current) {
       const map = new maplibregl.Map({
         container: mapPreviewRef.current,
-        style: mapPreviewStyleUrl,
+        style:
+          typeof mapPreviewStyle === "string"
+            ? mapPreviewStyle
+            : (mapPreviewStyle as unknown as maplibregl.StyleSpecification),
         center: [36.668, -1.248],
         zoom: 14,
       });
@@ -1393,7 +1558,7 @@ export default function VendorDashboard() {
       map.on("mouseup", stopDrag);
       map.on("mouseleave", stopDrag);
     }
-  }, [mapPreviewOpen]);
+  }, [mapPreviewOpen, mapPreviewStyle]);
 
   useEffect(() => {
     if (mapPreviewOpen) return;
@@ -1427,6 +1592,64 @@ export default function VendorDashboard() {
       map.fitBounds(bounds, { padding: 40, duration: 600 });
     }
   }, [mapPreviewParcels]);
+
+  useEffect(() => {
+    if (!anchorMapOpen) return;
+    if (!anchorMapRef.current) return;
+
+    if (!anchorMapInstanceRef.current) {
+      const map = new maplibregl.Map({
+        container: anchorMapRef.current,
+        style:
+          typeof mapPreviewStyle === "string"
+            ? mapPreviewStyle
+            : (mapPreviewStyle as unknown as maplibregl.StyleSpecification),
+        center: anchorTrueCoord
+          ? [anchorTrueCoord.lng, anchorTrueCoord.lat]
+          : [36.668, -1.248],
+        zoom: anchorTrueCoord ? 18 : 14,
+      });
+      map.addControl(new maplibregl.NavigationControl(), "bottom-right");
+      anchorMapInstanceRef.current = map;
+
+      map.on("click", (event) => {
+        const next = { lat: event.lngLat.lat, lng: event.lngLat.lng };
+        setAnchorTrueCoord(next);
+        setAnchorStatus("Anchor landmark set.");
+      });
+    } else if (anchorTrueCoord) {
+      anchorMapInstanceRef.current.easeTo({
+        center: [anchorTrueCoord.lng, anchorTrueCoord.lat],
+        zoom: 18,
+        duration: 600,
+      });
+    }
+  }, [anchorMapOpen, anchorTrueCoord, mapPreviewStyle]);
+
+  useEffect(() => {
+    if (!anchorMapOpen) return;
+    if (!anchorMapInstanceRef.current) return;
+    if (!anchorTrueCoord) return;
+    if (!anchorMarkerRef.current) {
+      anchorMarkerRef.current = new maplibregl.Marker({ color: "#1f3d2d" })
+        .setLngLat([anchorTrueCoord.lng, anchorTrueCoord.lat])
+        .addTo(anchorMapInstanceRef.current);
+    } else {
+      anchorMarkerRef.current.setLngLat([
+        anchorTrueCoord.lng,
+        anchorTrueCoord.lat,
+      ]);
+    }
+  }, [anchorTrueCoord, anchorMapOpen]);
+
+  useEffect(() => {
+    if (anchorMapOpen) return;
+    if (anchorMapInstanceRef.current) {
+      anchorMapInstanceRef.current.remove();
+      anchorMapInstanceRef.current = null;
+    }
+    anchorMarkerRef.current = null;
+  }, [anchorMapOpen]);
 
   const handlePreviewAdvance = () => {
     goToPreviewIndex(streetPreviewIndex + 1);
@@ -1771,8 +1994,12 @@ export default function VendorDashboard() {
   };
 
   const parsePrice = (price: string) => {
-    const numeric = Number(price.replace(/[^0-9.]/g, ""));
-    if (price.toLowerCase().includes("k")) {
+    const normalized = price.trim().toLowerCase();
+    const numeric = Number(normalized.replace(/[^0-9.]/g, ""));
+    if (!Number.isFinite(numeric)) return 0;
+    const hasKsh = normalized.includes("ksh");
+    const hasK = /\b\d+(\.\d+)?\s*k\b/.test(normalized);
+    if (hasK && !hasKsh) {
       return numeric * 1000;
     }
     return numeric;
@@ -1822,7 +2049,7 @@ export default function VendorDashboard() {
         d: distance({ lat: medianLat, lng: medianLng }, s),
       }))
       .sort((a, b) => a.d - b.d);
-    const trimCount = Math.floor(withDistance.length * 0.1);
+    const trimCount = Math.floor(withDistance.length * beaconTrimRatio);
     const trimmed =
       withDistance.length > trimCount * 2
         ? withDistance.slice(trimCount, withDistance.length - trimCount)
@@ -1840,6 +2067,226 @@ export default function VendorDashboard() {
     };
   };
 
+  const calculateHri = (
+    samples: number,
+    lagSeconds: number,
+    hdop: number,
+    distanceKm: number
+  ) => {
+    let score = 100;
+    if (samples < 120) score -= (120 - samples) * 0.25;
+    if (lagSeconds > 5) score -= (lagSeconds - 5) * 2;
+    if (hdop > 1.5) score -= (hdop - 1.5) * 10;
+    if (distanceKm > 1) score -= (distanceKm - 1) * 5;
+    return Math.max(0, Math.min(100, Math.round(score)));
+  };
+
+  const computeDeltaVector = (
+    truth: { lat: number; lng: number },
+    raw: { lat: number; lng: number }
+  ) => {
+    const latRad = toRad(raw.lat);
+    const deltaNorth =
+      (truth.lat - raw.lat) * (Math.PI / 180) * WGS84_RADIUS;
+    const deltaEast =
+      (truth.lng - raw.lng) *
+      (Math.PI / 180) *
+      WGS84_RADIUS *
+      Math.cos(latRad);
+    return { deltaNorth, deltaEast };
+  };
+
+  const applyDeltaVector = (
+    raw: { lat: number; lng: number },
+    delta: { deltaNorth: number; deltaEast: number }
+  ) => {
+    const latRad = toRad(raw.lat);
+    const correctedLat =
+      raw.lat + (delta.deltaNorth / WGS84_RADIUS) * (180 / Math.PI);
+    const correctedLng =
+      raw.lng +
+      (delta.deltaEast / (WGS84_RADIUS * Math.cos(latRad))) *
+        (180 / Math.PI);
+    return { lat: correctedLat, lng: correctedLng };
+  };
+
+  const getHriStatus = (hri: number) => {
+    if (hri >= 85) return { label: "High precision", tone: "text-[#1f3d2d]" };
+    if (hri >= 51) return { label: "Standard precision", tone: "text-[#b26a00]" };
+    return { label: "Signal unstable", tone: "text-[#b3261e]" };
+  };
+
+  const runMapSearch = async () => {
+    const trimmed = mapSearchQuery.trim();
+    if (!trimmed || !mapboxToken) return;
+    setMapSearchLoading(true);
+    setMapSearchError(null);
+    try {
+      const response = await fetch(
+        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(
+          trimmed
+        )}.json?access_token=${mapboxToken}&limit=5`
+      );
+      if (!response.ok) {
+        throw new Error("Search failed");
+      }
+      const data = (await response.json()) as {
+        features?: { id: string; place_name: string; center: [number, number] }[];
+      };
+      setMapSearchResults(data.features ?? []);
+    } catch {
+      setMapSearchError("Search failed. Try again.");
+      setMapSearchResults([]);
+    } finally {
+      setMapSearchLoading(false);
+    }
+  };
+
+  const runAnchorSearch = async () => {
+    const trimmed = anchorSearchQuery.trim();
+    if (!trimmed || !mapboxToken) return;
+    setAnchorSearchLoading(true);
+    setAnchorSearchError(null);
+    try {
+      const response = await fetch(
+        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(
+          trimmed
+        )}.json?access_token=${mapboxToken}&limit=5`
+      );
+      if (!response.ok) {
+        throw new Error("Search failed");
+      }
+      const data = (await response.json()) as {
+        features?: { id: string; place_name: string; center: [number, number] }[];
+      };
+      setAnchorSearchResults(data.features ?? []);
+    } catch {
+      setAnchorSearchError("Search failed. Try again.");
+      setAnchorSearchResults([]);
+    } finally {
+      setAnchorSearchLoading(false);
+    }
+  };
+
+  const startAnchorSession = async () => {
+    if (!portalId) {
+      setAnchorStatus("Select a portal to start anchor.");
+      return;
+    }
+    if (!anchorTrueCoord) {
+      setAnchorStatus("Tap a landmark on the map first.");
+      return;
+    }
+    if (!navigator.geolocation) {
+      setAnchorStatus("Geolocation not supported.");
+      return;
+    }
+    const sessionId = `${portalId}-${Date.now()}`;
+    setAnchorSessionId(sessionId);
+    setAnchorInputSessionId(sessionId);
+    setAnchorActive(true);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("activeAnchorSessionId", sessionId);
+    }
+    await setDoc(doc(db, "mapping_sessions", sessionId), {
+      portalId,
+      sessionId,
+      true_landmark_coords: anchorTrueCoord,
+      createdAt: serverTimestamp(),
+      status: "active",
+      createdBy: auth.currentUser?.uid ?? null,
+    });
+    const dbPath = dbRef(
+      realtimeDb,
+      `anchor_telemetry/${portalId}/${sessionId}`
+    );
+    anchorDbRef.current = dbPath;
+    if (anchorWatchRef.current !== null) {
+      navigator.geolocation.clearWatch(anchorWatchRef.current);
+    }
+    setAnchorStatus("Anchor running… stay still.");
+    const deltaWindow: { deltaNorth: number; deltaEast: number }[] = [];
+    let lastPushAt = 0;
+    anchorWatchRef.current = navigator.geolocation.watchPosition(
+      (pos) => {
+        const now = pos.timestamp || Date.now();
+        if (now - lastPushAt < 1000) {
+          return;
+        }
+        lastPushAt = now;
+        const raw = {
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+        };
+        const delta = computeDeltaVector(anchorTrueCoord, raw);
+        deltaWindow.push(delta);
+        if (deltaWindow.length > 60) {
+          deltaWindow.shift();
+        }
+        const avg = deltaWindow.reduce(
+          (acc, item) => ({
+            deltaNorth: acc.deltaNorth + item.deltaNorth,
+            deltaEast: acc.deltaEast + item.deltaEast,
+          }),
+          { deltaNorth: 0, deltaEast: 0 }
+        );
+        const averaged = {
+          deltaNorth: avg.deltaNorth / deltaWindow.length,
+          deltaEast: avg.deltaEast / deltaWindow.length,
+        };
+        const payload: AnchorPayload = {
+          sessionId,
+          measuredLat: raw.lat,
+          measuredLng: raw.lng,
+          deltaNorth: averaged.deltaNorth,
+          deltaEast: averaged.deltaEast,
+          lat: anchorTrueCoord.lat,
+          lng: anchorTrueCoord.lng,
+          accuracy: pos.coords.accuracy ?? 0,
+          timestamp: now,
+        };
+        setAnchorData(payload);
+        const entryRef = push(dbPath);
+        dbSet(entryRef, payload);
+      },
+      () => {
+        setAnchorStatus("Anchor GPS error. Move to open sky.");
+      },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
+    );
+  };
+
+  const stopAnchorSession = () => {
+    if (anchorWatchRef.current !== null) {
+      navigator.geolocation.clearWatch(anchorWatchRef.current);
+      anchorWatchRef.current = null;
+    }
+    setAnchorActive(false);
+    setAnchorStatus("Anchor stopped.");
+    if (anchorDbRef.current) {
+      remove(anchorDbRef.current).catch(() => null);
+    }
+    if (anchorSessionId) {
+      updateDoc(doc(db, "mapping_sessions", anchorSessionId), {
+        status: "stopped",
+        stoppedAt: serverTimestamp(),
+      }).catch(() => null);
+    }
+  };
+
+  const joinAnchorSession = () => {
+    const trimmed = anchorInputSessionId.trim();
+    if (!trimmed) {
+      setAnchorStatus("Enter a session ID to join.");
+      return;
+    }
+    setAnchorSessionId(trimmed);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("activeAnchorSessionId", trimmed);
+    }
+    setAnchorStatus(`Joined anchor session ${trimmed}.`);
+  };
+
   const computeCornerConfidence = (
     averaged: { lat: number; lng: number },
     samples: { lat: number; lng: number }[],
@@ -1853,7 +2300,7 @@ export default function VendorDashboard() {
       distances.reduce((sum, value) => sum + (value - mean) ** 2, 0) /
       distances.length;
     const stdDev = Math.sqrt(variance);
-    const accuracyPenalty = Math.max(0, accuracy - minGpsAccuracyMeters) * 5;
+    const accuracyPenalty = Math.max(0, accuracy - beaconAccuracyTargetMeters) * 8;
     const dispersionPenalty = stdDev * 20;
     const raw = 100 - accuracyPenalty - dispersionPenalty;
     return Math.max(0, Math.min(100, Math.round(raw)));
@@ -1873,6 +2320,8 @@ export default function VendorDashboard() {
       start: Date.now(),
       samples: [],
       watchId: null,
+      received: 0,
+      rejectedMotion: 0,
     };
     setSubParcels((current) =>
       current.map((item) =>
@@ -1888,22 +2337,55 @@ export default function VendorDashboard() {
     );
     const watchId = navigator.geolocation.watchPosition(
       (pos) => {
+        const entry = cornerSampleRef.current[parcelId];
+        if (entry) {
+          entry.received += 1;
+        }
         const accuracy = pos.coords.accuracy ?? 0;
         const signalStrength = calcSignalStrength(accuracy);
-        if (accuracy > minGpsAccuracyMeters) {
-          setLocationStatus(
-            `Hold still... waiting for ≤${minGpsAccuracyMeters}m accuracy`
-          );
+        const stillEnough =
+          Date.now() - lastMotionTimeRef.current > stillnessWindowMs;
+        if (!stillEnough) {
+          if (entry) {
+            entry.rejectedMotion += 1;
+          }
+          setLocationStatus("Hold still... motion detected.");
           return;
         }
-        const sample = {
+        if (accuracy > beaconAccuracyTargetMeters) {
+          setLocationStatus(
+            `Low accuracy (±${Math.round(
+              accuracy
+            )}m). Capturing anyway — anchor correction will be applied.`
+          );
+        }
+        const rawSample = {
           lat: pos.coords.latitude,
           lng: pos.coords.longitude,
         };
-        const entry = cornerSampleRef.current[parcelId];
+        const correctedSample =
+          anchorData && anchorData.sessionId === anchorSessionId
+            ? applyDeltaVector(rawSample, anchorData)
+            : rawSample;
         if (entry) {
-          entry.samples.push(sample);
+          entry.samples.push(correctedSample);
           entry.lastAccuracy = accuracy;
+          const lagSeconds = anchorData
+            ? Math.max((Date.now() - anchorData.timestamp) / 1000, 0)
+            : 0;
+          const distanceKm = anchorData
+            ? distance(
+                { lat: anchorData.measuredLat, lng: anchorData.measuredLng },
+                rawSample
+              ) / 1000
+            : 0;
+          const hdopProxy = Math.max(0.8, accuracy / 1.5);
+          const hri = calculateHri(
+            entry.samples.length,
+            lagSeconds,
+            hdopProxy,
+            distanceKm
+          );
           setSubParcels((current) =>
             current.map((item) =>
               item.id === parcelId
@@ -1912,6 +2394,7 @@ export default function VendorDashboard() {
                     cornerSampleCount: entry.samples.length,
                     gpsAccuracy: accuracy,
                     signalStrength,
+                    cornerHri: hri,
                   }
                 : item
             )
@@ -1945,7 +2428,19 @@ export default function VendorDashboard() {
       window.clearInterval(countdownId);
       const averaged = averageCornerSamples(entry.samples);
       if (!averaged) {
-        setLocationStatus("No reliable samples collected. Try again.");
+        if (entry.received === 0) {
+          setLocationStatus(
+            "No GPS samples received. Check permissions or move to open sky."
+          );
+        } else if (entry.samples.length === 0 && entry.rejectedMotion > 0) {
+          setLocationStatus(
+            "Too much motion detected during sampling. Stand still and retry."
+          );
+        } else {
+          setLocationStatus(
+            "Signal too noisy to average. Try again with clearer sky."
+          );
+        }
         setSubParcels((current) =>
           current.map((item) =>
             item.id === parcelId
@@ -1955,7 +2450,7 @@ export default function VendorDashboard() {
         );
         return;
       }
-      const lastAccuracy = entry.lastAccuracy ?? minGpsAccuracyMeters;
+      const lastAccuracy = entry.lastAccuracy ?? beaconAccuracyTargetMeters;
       const cornerConfidence = computeCornerConfidence(
         averaged,
         entry.samples,
@@ -2543,6 +3038,15 @@ export default function VendorDashboard() {
             disabled={!canViewLeads}
           >
             Export leads
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              window.location.href = "/purchases";
+            }}
+            className="rounded-full border border-[#eadfce] px-4 py-2 text-[#5a4a44] transition hover:border-[#c9b8a6]"
+          >
+            Manage purchases
           </button>
           {canCreateListings && (
             <button
@@ -4947,6 +5451,55 @@ export default function VendorDashboard() {
                       <p className="mt-2 text-xs text-[#5a4a44]">
                         Preview and adjust parcel positions on the map.
                       </p>
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setAnchorMapOpen(true)}
+                          className="rounded-full border border-[#eadfce] bg-white px-3 py-2 text-[10px] font-semibold text-[#5a4a44]"
+                        >
+                          Pick anchor on map
+                        </button>
+                        <button
+                          type="button"
+                          onClick={startAnchorSession}
+                          className="rounded-full bg-[#1f3d2d] px-3 py-2 text-[10px] font-semibold text-white"
+                        >
+                          Start anchor
+                        </button>
+                        <button
+                          type="button"
+                          onClick={stopAnchorSession}
+                          className="rounded-full border border-[#eadfce] bg-white px-3 py-2 text-[10px] font-semibold text-[#5a4a44]"
+                        >
+                          Stop anchor
+                        </button>
+                      </div>
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
+                        <input
+                          value={anchorInputSessionId}
+                          onChange={(event) => setAnchorInputSessionId(event.target.value)}
+                          placeholder="Enter session ID to join"
+                          className="w-full max-w-[220px] rounded-full border border-[#eadfce] bg-white px-3 py-2 text-[10px] text-[#14110f]"
+                        />
+                        <button
+                          type="button"
+                          onClick={joinAnchorSession}
+                          className="rounded-full border border-[#eadfce] bg-white px-3 py-2 text-[10px] font-semibold text-[#5a4a44]"
+                        >
+                          Join session
+                        </button>
+                      </div>
+                      <p className="mt-2 text-[10px] text-[#7a5f54]">
+                        {anchorStatus ?? "Anchor is off."}
+                        {anchorData ? (
+                          <>
+                            {" "}
+                            · ±{Math.round(anchorData.accuracy)}m ·{" "}
+                            {anchorData.lat.toFixed(5)}, {anchorData.lng.toFixed(5)}
+                          </>
+                        ) : null}
+                        {anchorSessionId ? ` · Session ${anchorSessionId}` : ""}
+                      </p>
                     </div>
                     <button
                       type="button"
@@ -4966,7 +5519,7 @@ export default function VendorDashboard() {
                       Stand at the beacon (corner post) and tap "Capture corner".
                     </li>
                     <li>
-                      Stay still while the app samples GPS for 30 seconds.
+                      Stay still while the app samples GPS for 15 seconds.
                     </li>
                     <li>
                       Repeat for each corner (Beacon 1, 2, 3, 4...).
@@ -5141,14 +5694,30 @@ export default function VendorDashboard() {
                             )}
                           </div>
                           {parcel.samplingCorner && (
-                            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[10px] text-[#6b3e1e]">
-                              <span>
-                                Sampling... {parcel.cornerCountdown ?? 0}s
-                              </span>
-                              <span>Samples: {parcel.cornerSampleCount ?? 0}</span>
-                              <span>
-                                Signal {Math.round(parcel.signalStrength ?? 0)}%
-                              </span>
+                            <div className="mt-3 space-y-2 text-[10px] text-[#6b3e1e]">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <span>
+                                  Sampling... {parcel.cornerCountdown ?? 0}s
+                                </span>
+                                <span>
+                                  Samples: {parcel.cornerSampleCount ?? 0}
+                                </span>
+                                <span>
+                                  Signal {Math.round(parcel.signalStrength ?? 0)}%
+                                </span>
+                              </div>
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <span className="text-[#7a5f54]">
+                                  HRI: {Math.round(parcel.cornerHri ?? 0)}%
+                                </span>
+                                <span
+                                  className={
+                                    getHriStatus(parcel.cornerHri ?? 0).tone
+                                  }
+                                >
+                                  {getHriStatus(parcel.cornerHri ?? 0).label}
+                                </span>
+                              </div>
                             </div>
                           )}
                         </div>
@@ -5214,6 +5783,109 @@ export default function VendorDashboard() {
         </div>
       )}
 
+      {anchorMapOpen && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6">
+          <div className="w-full max-w-4xl max-h-[90vh] overflow-hidden rounded-3xl border border-[#eadfce] bg-[#fbf8f3] p-6 shadow-[0_30px_70px_-40px_rgba(20,17,15,0.6)]">
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-xs uppercase tracking-[0.35em] text-[#a67047]">
+                  Anchor landmark
+                </p>
+                <p className="mt-2 text-lg font-semibold text-[#14110f]">
+                  Tap a visible landmark
+                </p>
+                <p className="mt-1 text-xs text-[#5a4a44]">
+                  Tap the exact gate/post on the map to lock the true point.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setAnchorMapOpen(false)}
+                className="rounded-full border border-[#eadfce] px-3 py-1 text-xs text-[#5a4a44]"
+              >
+                Close
+              </button>
+            </div>
+            <div className="mt-4 overflow-hidden rounded-3xl border border-[#eadfce] bg-white">
+              <div className="relative h-[420px] w-full">
+                <div className="absolute right-4 top-4 z-10 w-[220px] rounded-2xl border border-[#eadfce] bg-white/95 p-2 text-[11px] shadow-sm backdrop-blur">
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={anchorSearchQuery}
+                      onChange={(event) => setAnchorSearchQuery(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          runAnchorSearch();
+                        }
+                      }}
+                      placeholder="Search places"
+                      className="w-full rounded-full border border-[#eadfce] bg-white px-3 py-2 text-[11px] text-[#14110f]"
+                    />
+                    <button
+                      type="button"
+                      onClick={runAnchorSearch}
+                      disabled={!mapboxToken || anchorSearchLoading}
+                      className="rounded-full bg-[#1f3d2d] px-3 py-2 text-[10px] font-semibold text-white disabled:opacity-60"
+                    >
+                      {anchorSearchLoading ? "..." : "Go"}
+                    </button>
+                  </div>
+                  {anchorSearchError && (
+                    <p className="mt-2 text-[10px] text-[#b3261e]">
+                      {anchorSearchError}
+                    </p>
+                  )}
+                  {anchorSearchResults.length > 0 && (
+                    <div className="mt-2 max-h-40 overflow-auto rounded-xl border border-[#eadfce] bg-white">
+                      {anchorSearchResults.map((result) => (
+                        <button
+                          key={result.id}
+                          type="button"
+                          onClick={() => {
+                            setAnchorSearchResults([]);
+                            anchorMapInstanceRef.current?.flyTo({
+                              center: result.center,
+                              zoom: 16,
+                              duration: 800,
+                            });
+                          }}
+                          className="block w-full border-b border-[#f1e6d7] px-3 py-2 text-left text-[10px] text-[#5a4a44] hover:bg-[#fbf8f3]"
+                        >
+                          {result.place_name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {!mapboxToken && (
+                    <p className="mt-2 text-[10px] text-[#7a5f54]">
+                      Add Mapbox token to search.
+                    </p>
+                  )}
+                </div>
+                <div ref={anchorMapRef} className="h-full w-full" />
+              </div>
+            </div>
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs text-[#5a4a44]">
+              <span>
+                Selected:{" "}
+                {anchorTrueCoord
+                  ? `${anchorTrueCoord.lat.toFixed(6)}, ${anchorTrueCoord.lng.toFixed(
+                      6
+                    )}`
+                  : "None"}
+              </span>
+              <button
+                type="button"
+                onClick={() => setAnchorMapOpen(false)}
+                className="rounded-full bg-[#1f3d2d] px-4 py-2 text-xs font-semibold text-white"
+              >
+                Use this anchor
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {mapPreviewOpen && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6">
           <div className="w-full max-w-4xl max-h-[90vh] overflow-hidden rounded-3xl border border-[#eadfce] bg-[#fbf8f3] p-6 shadow-[0_30px_70px_-40px_rgba(20,17,15,0.6)]">
@@ -5238,7 +5910,63 @@ export default function VendorDashboard() {
               </button>
             </div>
             <div className="mt-4 overflow-hidden rounded-3xl border border-[#eadfce] bg-white">
-              <div ref={mapPreviewRef} className="h-[420px] w-full" />
+              <div className="relative h-[420px] w-full">
+                <div className="absolute right-4 top-4 z-10 w-[220px] rounded-2xl border border-[#eadfce] bg-white/95 p-2 text-[11px] shadow-sm backdrop-blur">
+                  <div className="flex items-center gap-2">
+                    <input
+                      value={mapSearchQuery}
+                      onChange={(event) => setMapSearchQuery(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter") {
+                          runMapSearch();
+                        }
+                      }}
+                      placeholder="Search places"
+                      className="w-full rounded-full border border-[#eadfce] bg-white px-3 py-2 text-[11px] text-[#14110f]"
+                    />
+                    <button
+                      type="button"
+                      onClick={runMapSearch}
+                      disabled={!mapboxToken || mapSearchLoading}
+                      className="rounded-full bg-[#1f3d2d] px-3 py-2 text-[10px] font-semibold text-white disabled:opacity-60"
+                    >
+                      {mapSearchLoading ? "..." : "Go"}
+                    </button>
+                  </div>
+                  {mapSearchError && (
+                    <p className="mt-2 text-[10px] text-[#b3261e]">
+                      {mapSearchError}
+                    </p>
+                  )}
+                  {mapSearchResults.length > 0 && (
+                    <div className="mt-2 max-h-40 overflow-auto rounded-xl border border-[#eadfce] bg-white">
+                      {mapSearchResults.map((result) => (
+                        <button
+                          key={result.id}
+                          type="button"
+                          onClick={() => {
+                            setMapSearchResults([]);
+                            mapPreviewInstanceRef.current?.flyTo({
+                              center: result.center,
+                              zoom: 16,
+                              duration: 800,
+                            });
+                          }}
+                          className="block w-full border-b border-[#f1e6d7] px-3 py-2 text-left text-[10px] text-[#5a4a44] hover:bg-[#fbf8f3]"
+                        >
+                          {result.place_name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {!mapboxToken && (
+                    <p className="mt-2 text-[10px] text-[#7a5f54]">
+                      Add Mapbox token to search.
+                    </p>
+                  )}
+                </div>
+                <div ref={mapPreviewRef} className="h-full w-full" />
+              </div>
             </div>
             <div className="mt-4 flex items-center justify-between text-xs text-[#5a4a44]">
               <span>Tip: Click and drag a parcel to nudge its position.</span>
