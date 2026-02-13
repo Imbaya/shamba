@@ -645,23 +645,6 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
               </p>
             )}
           </div>
-          {activePlot.mutationForm?.url && (
-            <div className="mt-3 overflow-hidden rounded-2xl border border-[#eadfce] bg-white">
-              {mutationFormIsPdf ? (
-                <iframe
-                  src={activePlot.mutationForm.url}
-                  title={activePlot.mutationForm.name || "Mutation form preview"}
-                  className="h-32 w-full"
-                />
-              ) : (
-                <img
-                  src={activePlot.mutationForm.url}
-                  alt={activePlot.mutationForm.name || "Mutation form preview"}
-                  className="h-32 w-full object-cover"
-                />
-              )}
-            </div>
-          )}
           {!inquiryOpen ? (
             <>
               {activePlot.mutationForm?.url && (
