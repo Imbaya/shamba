@@ -16,14 +16,34 @@ export type Plot = {
   vendorType: "Company" | "Individual";
   amenities: string[];
   center: [number, number];
-  polygon: [number, number][];
-  startPoint: [number, number];
+  polygon?: [number, number][];
+  startPoint?: [number, number];
   totalParcels?: number;
   availableParcels?: number;
   isSold?: boolean;
-  nodes?: {
-    label?: string;
-    imageUrl?: string;
+  soldParcelIds?: number[];
+  surroundingImages?: {
+    name?: string;
+    url?: string;
+  }[];
+  mutationForm?: {
+    name?: string;
+    url?: string;
+  };
+  mutationParcels?: {
+    parcelNumber: number;
+    confidence?: number;
+    points: { x: number; y: number }[];
+  }[];
+  soldParcelOverlays?: {
+    parcelNumber: number;
+    confidence?: number;
+    points: { x: number; y: number }[];
+  }[];
+  manualParcelOverlays?: {
+    parcelNumber: number;
+    confidence?: number;
+    points: { x: number; y: number }[];
   }[];
 };
 type MapboxMapProps = {
@@ -31,21 +51,23 @@ type MapboxMapProps = {
   onFiltersClick?: () => void;
 };
 
+type OverlayPoint = { x: number; y: number };
+type ParcelOverlay = {
+  parcelNumber: number;
+  confidence?: number;
+  points: OverlayPoint[];
+};
+
 export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<maplibregl.Map | null>(null);
   const markerRef = useRef<maplibregl.Marker[]>([]);
-  const startMarkerRef = useRef<maplibregl.Marker | null>(null);
   const [is3D, setIs3D] = useState(false);
   const [activePlot, setActivePlot] = useState<Plot | null>(null);
-  const [streetViewOpen, setStreetViewOpen] = useState(false);
-  const [streetViewStep, setStreetViewStep] = useState(0);
-  const [streetViewPrevStep, setStreetViewPrevStep] = useState<number | null>(
-    null
-  );
-  const [streetViewAnimating, setStreetViewAnimating] = useState(false);
-  const [streetPanValue, setStreetPanValue] = useState(50);
-  const lastStreetTapRef = useRef(0);
+  const [galleryOpen, setGalleryOpen] = useState(false);
+  const [galleryIndex, setGalleryIndex] = useState(0);
+  const [mutationFormOpen, setMutationFormOpen] = useState(false);
+  const [soldOverlays, setSoldOverlays] = useState<ParcelOverlay[]>([]);
   const [inquiryOpen, setInquiryOpen] = useState(false);
   const [inquiryName, setInquiryName] = useState("");
   const [inquiryPhone, setInquiryPhone] = useState("");
@@ -62,9 +84,15 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
 
-  const streetNodes = useMemo(
-    () =>
-      activePlot?.nodes?.filter((node) => node.imageUrl) ?? [],
+  const listingImages = useMemo(
+    () => activePlot?.surroundingImages?.filter((item) => item.url) ?? [],
+    [activePlot]
+  );
+  const mutationFormIsPdf = useMemo(
+    () => {
+      const url = activePlot?.mutationForm?.url?.toLowerCase() ?? "";
+      return /\.pdf($|\?)/.test(url);
+    },
     [activePlot]
   );
   const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
@@ -174,7 +202,9 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
   const geojson = useMemo(
     () => ({
       type: "FeatureCollection" as const,
-      features: visiblePlots.map((plot) => ({
+      features: visiblePlots
+        .filter((plot) => (plot.polygon?.length ?? 0) >= 3)
+        .map((plot) => ({
         type: "Feature" as const,
         properties: {
           id: plot.id,
@@ -182,7 +212,7 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
         },
         geometry: {
           type: "Polygon" as const,
-          coordinates: [plot.polygon],
+          coordinates: [plot.polygon as [number, number][]],
         },
       })),
     }),
@@ -223,35 +253,90 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
   };
 
   useEffect(() => {
-    if (streetViewPrevStep === null) return;
-    const timer = setTimeout(() => {
-      setStreetViewPrevStep(null);
-      setStreetViewAnimating(false);
-    }, 520);
-    return () => clearTimeout(timer);
-  }, [streetViewPrevStep, streetViewStep]);
-
-  const goToStreetStep = (nextStep: number) => {
-    if (!streetNodes.length) return;
-    const bounded = Math.max(0, Math.min(nextStep, streetNodes.length - 1));
-    if (bounded === streetViewStep) return;
-    setStreetViewPrevStep(streetViewStep);
-    setStreetViewStep(bounded);
-    setStreetViewAnimating(true);
-    setStreetPanValue(50);
-  };
-
-  const handleStreetAdvance = () => {
-    goToStreetStep(streetViewStep + 1);
-  };
-
-  const handleStreetTouch = () => {
-    const now = Date.now();
-    if (now - lastStreetTapRef.current < 300) {
-      handleStreetAdvance();
+    if (!activePlot || !mutationFormOpen) {
+      setSoldOverlays([]);
+      return;
     }
-    lastStreetTapRef.current = now;
-  };
+    const soldSet = new Set(activePlot.soldParcelIds ?? []);
+    if (!soldSet.size) {
+      setSoldOverlays([]);
+      return;
+    }
+    const source =
+      activePlot.soldParcelOverlays?.length
+        ? activePlot.soldParcelOverlays
+        : activePlot.mutationParcels?.length
+        ? activePlot.mutationParcels
+        : activePlot.manualParcelOverlays ?? [];
+    setSoldOverlays(
+      source.filter(
+        (overlay) =>
+          soldSet.has(overlay.parcelNumber) && (overlay.points?.length ?? 0) >= 3
+      )
+    );
+  }, [activePlot, mutationFormOpen]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const refreshSoldOverlays = async () => {
+      if (!activePlot || !mutationFormOpen) return;
+      if (!activePlot.mutationForm?.url) return;
+      if (/\.pdf($|\?)/i.test(activePlot.mutationForm.url)) return;
+      const soldParcelIds = activePlot.soldParcelIds ?? [];
+      if (!soldParcelIds.length) return;
+      const existing = activePlot.soldParcelOverlays ?? [];
+      const hasAll = soldParcelIds.every((id) =>
+        existing.some((overlay) => overlay.parcelNumber === id)
+      );
+      if (hasAll) return;
+      try {
+        const response = await fetch("/api/mutation-overlay", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            mutationFormUrl: activePlot.mutationForm.url,
+            soldParcelIds,
+          }),
+        });
+        if (!response.ok || cancelled) return;
+        const payload = (await response.json()) as {
+          overlays?: ParcelOverlay[];
+        };
+        const fetched = (payload.overlays ?? []).filter(
+          (overlay) =>
+            soldParcelIds.includes(overlay.parcelNumber) &&
+            overlay.points.length >= 3
+        );
+        if (!fetched.length || cancelled) return;
+        let mergedForState: ParcelOverlay[] = [];
+        setSoldOverlays((current) => {
+          const map = new Map<number, ParcelOverlay>();
+          current.forEach((overlay) => map.set(overlay.parcelNumber, overlay));
+          fetched.forEach((overlay) => map.set(overlay.parcelNumber, overlay));
+          mergedForState = Array.from(map.values()).sort(
+            (a, b) => a.parcelNumber - b.parcelNumber
+          );
+          return mergedForState;
+        });
+        if (!cancelled && mergedForState.length) {
+          setActivePlot((current) =>
+            current
+              ? {
+                  ...current,
+                  soldParcelOverlays: mergedForState,
+                }
+              : current
+          );
+        }
+      } catch {
+        // keep existing overlay state on refresh failures
+      }
+    };
+    refreshSoldOverlays();
+    return () => {
+      cancelled = true;
+    };
+  }, [activePlot, mutationFormOpen]);
 
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
@@ -416,32 +501,6 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
 
   useEffect(() => {
     if (!mapRef.current) return;
-    if (startMarkerRef.current) {
-      startMarkerRef.current.remove();
-      startMarkerRef.current = null;
-    }
-
-    if (!activePlot) return;
-    const marker = document.createElement("div");
-    marker.style.background = "rgba(31,61,45,0.95)";
-    marker.style.border = "2px solid #f4f1ea";
-    marker.style.borderRadius = "999px";
-    marker.style.padding = "6px 10px";
-    marker.style.fontSize = "11px";
-    marker.style.fontWeight = "700";
-    marker.style.color = "#f4f1ea";
-    marker.style.boxShadow = "0 10px 18px rgba(20,17,15,0.25)";
-    marker.innerText = "Start";
-    startMarkerRef.current = new maplibregl.Marker({
-      element: marker,
-      anchor: "bottom",
-    })
-      .setLngLat(activePlot.startPoint)
-      .addTo(mapRef.current);
-  }, [activePlot]);
-
-  useEffect(() => {
-    if (!mapRef.current) return;
     mapRef.current.easeTo({
       pitch: is3D ? 50 : 0,
       bearing: is3D ? -12 : 0,
@@ -556,6 +615,8 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
               onClick={() => {
                 setActivePlot(null);
                 setInquiryOpen(false);
+                setGalleryOpen(false);
+                setMutationFormOpen(false);
               }}
               className="rounded-full border border-[#eadfce] px-2 py-1 text-[10px] text-[#5a4a44]"
             >
@@ -578,26 +639,43 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
                 {activePlot.totalParcels}
               </p>
             )}
-            <p className="text-[#6b3e1e]">
-              Start point for the street view is shown on the map. Zoom out if
-              you do not see it.
-            </p>
+            {(activePlot.soldParcelIds?.length ?? 0) > 0 && (
+              <p className="text-[#8b2f2f]">
+                Sold parcels: {activePlot.soldParcelIds?.join(", ")}
+              </p>
+            )}
           </div>
+          {activePlot.mutationForm?.url && (
+            <div className="mt-3 overflow-hidden rounded-2xl border border-[#eadfce] bg-white">
+              {mutationFormIsPdf ? (
+                <iframe
+                  src={activePlot.mutationForm.url}
+                  title={activePlot.mutationForm.name || "Mutation form preview"}
+                  className="h-32 w-full"
+                />
+              ) : (
+                <img
+                  src={activePlot.mutationForm.url}
+                  alt={activePlot.mutationForm.name || "Mutation form preview"}
+                  className="h-32 w-full object-cover"
+                />
+              )}
+            </div>
+          )}
           {!inquiryOpen ? (
             <>
-              <button
-                type="button"
-                onClick={() => {
-                  setStreetViewStep(0);
-                  setStreetViewPrevStep(null);
-                  setStreetViewAnimating(false);
-                  setStreetPanValue(50);
-                  setStreetViewOpen(true);
-                }}
-                className="mt-4 w-full rounded-full bg-[#1f3d2d] px-3 py-2 text-[11px] font-semibold text-white"
-              >
-                Open street view
-              </button>
+              {activePlot.mutationForm?.url && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMutationFormOpen(true);
+                    setSoldOverlays([]);
+                  }}
+                  className="mt-2 w-full rounded-full border border-[#1f3d2d]/30 px-3 py-2 text-[11px] font-semibold text-[#1f3d2d]"
+                >
+                  View mutation form
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setInquiryOpen(true)}
@@ -702,26 +780,26 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
         </div>
       )}
 
-      {streetViewOpen && activePlot && (
+      {galleryOpen && activePlot && (
         <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/40 px-4 py-6">
           <div className="w-full max-w-2xl rounded-3xl border border-[#eadfce] bg-[#fbf8f3] p-6 shadow-[0_30px_70px_-40px_rgba(20,17,15,0.6)]">
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-[10px] uppercase tracking-[0.3em] text-[#a67047]">
-                  Node-to-node tour
+                  Surrounding images
                 </p>
                 <p className="mt-2 text-lg font-semibold text-[#14110f]">
                   {activePlot.label}
                 </p>
                 <p className="mt-1 text-xs text-[#5a4a44]">
-                  {streetNodes.length > 0
-                    ? `Step ${streetViewStep + 1} of ${streetNodes.length}`
-                    : "No street view nodes yet"}
+                  {listingImages.length > 0
+                    ? `Image ${galleryIndex + 1} of ${listingImages.length}`
+                    : "No images available"}
                 </p>
               </div>
               <button
                 type="button"
-                onClick={() => setStreetViewOpen(false)}
+                onClick={() => setGalleryOpen(false)}
                 className="rounded-full border border-[#eadfce] px-3 py-1 text-xs text-[#5a4a44]"
               >
                 Close
@@ -729,95 +807,131 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
             </div>
 
             <div className="mt-5 overflow-hidden rounded-3xl border border-[#eadfce] bg-[radial-gradient(circle_at_top,_#f4ede2,_#f0e6d7_50%,_#efe1cd)]">
-              {streetNodes.length > 0 ? (
-                <div className="relative h-[280px]">
-                  {streetViewPrevStep !== null && (
-                    <div
-                      key={`street-prev-${streetViewPrevStep}`}
-                      className={`absolute inset-0 bg-cover bg-center transition-opacity duration-300 ease-out ${
-                        streetViewAnimating ? "opacity-0" : "opacity-100"
-                      } street-swipe-out`}
-                      style={{
-                        backgroundImage: `url(${streetNodes[streetViewPrevStep]?.imageUrl})`,
-                        backgroundSize: "130% 100%",
-                        backgroundPosition: `${streetPanValue}% 50%`,
-                      }}
-                    />
-                  )}
-                  <div
-                    key={`street-current-${streetViewStep}`}
-                    className={`relative h-full w-full bg-cover bg-center transition-all duration-300 ease-out street-swipe-in ${
-                      streetViewAnimating
-                        ? "scale-[1.02] opacity-90"
-                        : "scale-100 opacity-100"
-                    }`}
-                    style={{
-                      backgroundImage: `url(${streetNodes[streetViewStep]?.imageUrl})`,
-                      backgroundSize: "130% 100%",
-                      backgroundPosition: `${streetPanValue}% 50%`,
-                    }}
-                    onDoubleClick={handleStreetAdvance}
-                    onTouchEnd={handleStreetTouch}
-                    role="button"
-                    tabIndex={0}
-                    aria-label="Advance to next street view node"
-                  />
-                  <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-between px-4 py-3 text-[10px] text-white">
-                    <span className="rounded-full bg-black/40 px-2 py-1">
-                      Node {streetViewStep + 1} of {streetNodes.length}
-                    </span>
-                    <span className="rounded-full bg-black/40 px-2 py-1">
-                      Double tap to advance
-                    </span>
-                  </div>
-                </div>
+              {listingImages.length > 0 ? (
+                <img
+                  src={listingImages[galleryIndex]?.url}
+                  alt={listingImages[galleryIndex]?.name || "Surrounding image"}
+                  className="h-[320px] w-full object-cover"
+                />
               ) : (
                 <div className="flex h-[280px] items-center justify-center text-sm text-[#6b3e1e]">
-                  No street view images available yet.
+                  No surrounding images available yet.
                 </div>
               )}
             </div>
 
-            {streetNodes.length > 0 && (
-              <div className="mt-4 space-y-3 text-xs text-[#5a4a44]">
-                <div className="flex items-center justify-between">
-                  <p className="text-[#7a6a63]">
-                    Double tap the image to move forward.
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => goToStreetStep(streetViewStep - 1)}
-                      className="rounded-full border border-[#eadfce] px-3 py-1 text-xs text-[#5a4a44]"
-                      disabled={streetViewStep === 0}
+            {listingImages.length > 1 && (
+              <div className="mt-4 flex items-center justify-between text-xs text-[#5a4a44]">
+                <button
+                  type="button"
+                  onClick={() =>
+                    setGalleryIndex((current) => Math.max(current - 1, 0))
+                  }
+                  className="rounded-full border border-[#eadfce] px-3 py-1"
+                  disabled={galleryIndex === 0}
+                >
+                  Back
+                </button>
+                <button
+                  type="button"
+                  onClick={() =>
+                    setGalleryIndex((current) =>
+                      Math.min(current + 1, listingImages.length - 1)
+                    )
+                  }
+                  className="rounded-full bg-[#c77d4b] px-3 py-1 text-white"
+                  disabled={galleryIndex >= listingImages.length - 1}
+                >
+                  Next
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      {mutationFormOpen && activePlot?.mutationForm?.url && (
+        <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/40 px-4 py-6">
+          <div className="w-full max-w-3xl rounded-3xl border border-[#eadfce] bg-[#fbf8f3] p-6 shadow-[0_30px_70px_-40px_rgba(20,17,15,0.6)]">
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-semibold text-[#14110f]">
+                Mutation form
+              </p>
+              <button
+                type="button"
+                onClick={() => setMutationFormOpen(false)}
+                className="rounded-full border border-[#eadfce] px-3 py-1 text-xs text-[#5a4a44]"
+              >
+                Close
+              </button>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              {(activePlot.soldParcelIds?.length ?? 0) === 0 && (
+                <span className="text-[11px] text-[#7a5f54]">
+                  No sold parcels yet.
+                </span>
+              )}
+              {soldOverlays.length > 0 && (
+                <span className="rounded-full border border-[#eadfce] bg-white px-3 py-1 text-[11px] text-[#8b2f2f]">
+                  Highlighting {soldOverlays.length} sold parcel(s)
+                </span>
+              )}
+              {!mutationFormIsPdf &&
+                (activePlot.soldParcelIds?.length ?? 0) > 0 &&
+                soldOverlays.length === 0 && (
+                  <span className="text-[11px] text-[#7a5f54]">
+                    Parcel polygons were not extracted for this mutation form.
+                  </span>
+                )}
+            </div>
+            <div className="mt-4 h-[65vh] overflow-hidden rounded-2xl border border-[#eadfce] bg-white">
+              {mutationFormIsPdf ? (
+                <iframe
+                  src={activePlot.mutationForm.url}
+                  title={activePlot.mutationForm.name || "Mutation form"}
+                  className="h-full w-full"
+                />
+              ) : (
+                <div className="flex h-full w-full items-center justify-center p-2">
+                  <div className="relative inline-block max-h-full max-w-full">
+                    <img
+                      src={activePlot.mutationForm.url}
+                      alt={activePlot.mutationForm.name || "Mutation form"}
+                      className="block max-h-[62vh] max-w-full"
+                    />
+                    <svg
+                      viewBox="0 0 100 100"
+                      preserveAspectRatio="none"
+                      className="pointer-events-none absolute inset-0 h-full w-full"
                     >
-                      Back
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => goToStreetStep(streetViewStep + 1)}
-                      className="rounded-full bg-[#c77d4b] px-3 py-1 text-xs text-white"
-                      disabled={streetViewStep >= streetNodes.length - 1}
-                    >
-                      Next
-                    </button>
+                      {soldOverlays.map((overlay) => (
+                        <polygon
+                          key={`sold-overlay-${overlay.parcelNumber}`}
+                          points={overlay.points
+                            .map((point) => `${point.x},${point.y}`)
+                            .join(" ")}
+                          fill="rgba(179,38,30,0.33)"
+                          stroke="rgba(124,24,19,0.9)"
+                          strokeWidth="0.6"
+                        />
+                      ))}
+                    </svg>
                   </div>
                 </div>
-                <div className="flex items-center gap-3">
-                  <span className="text-[10px] uppercase tracking-[0.2em] text-[#a67047]">
-                    Pan
+              )}
+            </div>
+            {soldOverlays.length > 0 && (
+              <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-[#5a4a44]">
+                {soldOverlays.map((overlay) => (
+                  <span
+                    key={`sold-pill-${overlay.parcelNumber}`}
+                    className="rounded-full border border-[#eadfce] bg-white px-3 py-1"
+                  >
+                    Parcel {overlay.parcelNumber}
+                    {typeof overlay.confidence === "number"
+                      ? ` (${Math.round(overlay.confidence * 100)}%)`
+                      : ""}
                   </span>
-                  <input
-                    type="range"
-                    min={0}
-                    max={100}
-                    value={streetPanValue}
-                    onChange={(event) =>
-                      setStreetPanValue(Number(event.target.value))
-                    }
-                    className="h-2 w-full cursor-pointer appearance-none rounded-full bg-[#eadfce]"
-                  />
-                </div>
+                ))}
               </div>
             )}
           </div>
@@ -835,46 +949,6 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
           100% {
             transform: translateY(0);
             opacity: 1;
-          }
-        }
-        .street-swipe-in {
-          animation: streetSwipeIn 520ms cubic-bezier(0.2, 0.8, 0.2, 1);
-        }
-        .street-swipe-out {
-          animation: streetSwipeOut 520ms cubic-bezier(0.2, 0.8, 0.2, 1);
-        }
-        @keyframes streetSwipeIn {
-          0% {
-            opacity: 0;
-            transform: translateX(8%) scale(1.2);
-            filter: blur(6px);
-          }
-          60% {
-            opacity: 0.95;
-            transform: translateX(2%) scale(1.02);
-            filter: blur(1.5px);
-          }
-          100% {
-            opacity: 1;
-            transform: translateX(0%) scale(1);
-            filter: blur(0px);
-          }
-        }
-        @keyframes streetSwipeOut {
-          0% {
-            opacity: 1;
-            transform: translateX(0%) scale(1);
-            filter: blur(0px);
-          }
-          60% {
-            opacity: 0.6;
-            transform: translateX(-4%) scale(1.08);
-            filter: blur(3px);
-          }
-          100% {
-            opacity: 0;
-            transform: translateX(-10%) scale(1.12);
-            filter: blur(6px);
           }
         }
       `}</style>

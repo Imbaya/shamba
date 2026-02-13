@@ -1,6 +1,7 @@
-﻿"use client";
+"use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
 import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
@@ -45,6 +46,24 @@ type VendorPlot = {
   totalParcels: number;
   soldParcelIds: number[];
   availableParcels?: number;
+  mutationFormUrl?: string;
+  mutationFormName?: string;
+  mutationParcels?: {
+    parcelNumber: number;
+    confidence?: number;
+    points: { x: number; y: number }[];
+  }[];
+  soldParcelOverlays?: {
+    parcelNumber: number;
+    confidence?: number;
+    points: { x: number; y: number }[];
+  }[];
+  parcelNumbers?: number[];
+  manualParcelOverlays?: {
+    parcelNumber: number;
+    confidence?: number;
+    points: { x: number; y: number }[];
+  }[];
 };
 
 const initialPlots: VendorPlot[] = [];
@@ -65,6 +84,12 @@ type DraftNode = {
   files: FileList | null;
   coords?: { lat: number; lng: number };
   imageUrl?: string;
+};
+
+type UploadedAsset = {
+  id: number;
+  name: string;
+  url: string;
 };
 
 type Inquiry = {
@@ -149,8 +174,68 @@ const initialPendingSales: SalesRecord[] = [];
 
 const initialSales: SalesRecord[] = [];
 
+type MutationParcel = {
+  parcelNumber: number;
+  confidence?: number;
+  points: { x: number; y: number }[];
+};
+
+const serializeSaleRecordForFirestore = (sale: SalesRecord) => {
+  const payload: {
+    id: string;
+    parcelName: string;
+    parcelId: string;
+    buyer: string;
+    salePrice: number;
+    processingFee: number;
+    netToVendor: number;
+    totalPaid: number;
+    remainingBalance: number;
+    installments: Omit<SaleInstallment, "proofFile">[];
+    soldOn: string;
+    fullyPaid?: boolean;
+    nextPaymentDate?: string;
+    attachments?: { label: string; name: string; url?: string }[];
+  } = {
+    id: sale.id,
+    parcelName: sale.parcelName,
+    parcelId: sale.parcelId,
+    buyer: sale.buyer,
+    salePrice: sale.salePrice,
+    processingFee: sale.processingFee,
+    netToVendor: sale.netToVendor,
+    totalPaid: sale.totalPaid,
+    remainingBalance: sale.remainingBalance,
+    installments: sale.installments.map((installment) => {
+      const cleaned = {
+        ...installment,
+      } as SaleInstallment;
+      delete cleaned.proofFile;
+      if (!cleaned.proofName) delete cleaned.proofName;
+      if (!cleaned.proofUrl) delete cleaned.proofUrl;
+      return cleaned as Omit<SaleInstallment, "proofFile">;
+    }),
+    soldOn: sale.soldOn,
+  };
+  if (typeof sale.fullyPaid === "boolean") {
+    payload.fullyPaid = sale.fullyPaid;
+  }
+  if (sale.nextPaymentDate) {
+    payload.nextPaymentDate = sale.nextPaymentDate;
+  }
+  if (sale.attachments?.length) {
+    payload.attachments = sale.attachments.map((attachment) => ({
+      label: attachment.label,
+      name: attachment.name,
+      ...(attachment.url ? { url: attachment.url } : {}),
+    }));
+  }
+  return payload;
+};
+
 
 export default function VendorDashboard() {
+  const searchParams = useSearchParams();
   const [newListingOpen, setNewListingOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<
     "active" | "drafts" | "inquiries" | "leads" | "pending" | "sales" | "members"
@@ -215,9 +300,18 @@ export default function VendorDashboard() {
   const [listingParcel, setListingParcel] = useState("");
   const [listingSize, setListingSize] = useState("");
   const [listingPrice, setListingPrice] = useState("");
+  const [listingParcelCount, setListingParcelCount] = useState("1");
   const [listingStepError, setListingStepError] = useState<string | null>(null);
   const [listingAmenities, setListingAmenities] = useState<string[]>([]);
   const [listingStep, setListingStep] = useState<1 | 2 | 3>(1);
+  const [mutationFormName, setMutationFormName] = useState("");
+  const [mutationFormUrl, setMutationFormUrl] = useState("");
+  const [mutationParcels, setMutationParcels] = useState<MutationParcel[]>([]);
+  const [mutationFormUploading, setMutationFormUploading] = useState(false);
+  const [surroundingImages, setSurroundingImages] = useState<UploadedAsset[]>(
+    []
+  );
+  const [surroundingUploading, setSurroundingUploading] = useState(false);
   const [panoramaNodes, setPanoramaNodes] = useState<
     DraftNode[]
   >([{ id: 1, label: "Node 1", files: null }]);
@@ -481,7 +575,17 @@ export default function VendorDashboard() {
     [mapboxToken]
   );
 
-  const getActiveVendorId = () => vendorId ?? auth.currentUser?.uid ?? null;
+  const getActiveVendorId = useCallback(
+    () => vendorId ?? auth.currentUser?.uid ?? null,
+    [vendorId]
+  );
+  const getDashboardScopeId = useCallback(() => {
+    const activeVendorId = getActiveVendorId();
+    if (!activeVendorId) return null;
+    return portalId
+      ? `portal:${portalId}:vendor:${activeVendorId}`
+      : `vendor:${activeVendorId}`;
+  }, [getActiveVendorId, portalId]);
 
   const selectedPlot = plots.find((plot) => plot.id === selectedPlotId) ?? null;
 
@@ -491,13 +595,18 @@ export default function VendorDashboard() {
 
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const params = new URLSearchParams(window.location.search);
-    const id =
-      params.get("portalId") || window.localStorage.getItem("activePortalId");
+    const idFromUrl = searchParams.get("portalId");
+    const idFromStorage = window.localStorage.getItem("activePortalId");
+    const id = idFromUrl || idFromStorage;
     if (id) {
       setPortalId(id);
+      if (idFromUrl) {
+        window.localStorage.setItem("activePortalId", idFromUrl);
+      }
+      return;
     }
-  }, []);
+    setPortalId(null);
+  }, [searchParams]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
@@ -898,16 +1007,61 @@ export default function VendorDashboard() {
 
   // Render full tree always to keep hooks order stable; use hydration-safe text.
 
+  async function loadDraftsForScope(scopeId: string) {
+    let snapshot;
+    try {
+      snapshot = await getDocs(
+        query(
+          collection(db, "draftListings"),
+          where("dashboardScopeId", "==", scopeId),
+          orderBy("updatedAt", "desc")
+        )
+      );
+    } catch {
+      snapshot = await getDocs(
+        query(
+          collection(db, "draftListings"),
+          where("dashboardScopeId", "==", scopeId)
+        )
+      );
+    }
+    const drafts: DraftListing[] = [];
+    snapshot.forEach((docSnap) => {
+      const data = docSnap.data() as {
+        name?: string;
+        acres?: string;
+        price?: string;
+        step?: 1 | 2 | 3;
+        amenities?: string[];
+        updatedAt?: { toDate: () => Date };
+      };
+      const updatedAt = data.updatedAt?.toDate();
+      drafts.push({
+        id: docSnap.id,
+        name: data.name || "Untitled",
+        acres: data.acres || "",
+        price: data.price || "",
+        updated: updatedAt
+          ? `Edited ${updatedAt.toLocaleDateString()}`
+          : "Saved recently",
+        step: data.step || 1,
+        amenities: data.amenities || [],
+      });
+    });
+    setDraftListings(drafts);
+  }
+
   useEffect(() => {
     const loadDrafts = async () => {
-      if (!vendorId) {
+      const scopeId = getDashboardScopeId();
+      if (!scopeId) {
         setDraftListings([]);
         return;
       }
-      await refreshDrafts(vendorId);
+      await loadDraftsForScope(scopeId);
     };
     loadDrafts();
-  }, [vendorId]);
+  }, [vendorId, portalId, getDashboardScopeId]);
 
   useEffect(() => {
     if (!window.DeviceOrientationEvent) return;
@@ -950,9 +1104,13 @@ export default function VendorDashboard() {
 
   useEffect(() => {
     const loadListings = async () => {
-      if (!vendorId) return;
+      const scopeId = getDashboardScopeId();
+      if (!scopeId) return;
       const snapshot = await getDocs(
-        query(collection(db, "listings"), where("vendorId", "==", vendorId))
+        query(
+          collection(db, "listings"),
+          where("dashboardScopeId", "==", scopeId)
+        )
       );
       const mapped: VendorPlot[] = [];
       snapshot.forEach((docSnap) => {
@@ -963,9 +1121,57 @@ export default function VendorDashboard() {
           parcels?: { name?: string }[];
           soldParcelIds?: number[];
           availableParcels?: number;
+          mutationForm?: { name?: string; url?: string } | null;
+          mutationParcels?: MutationParcel[];
+          soldParcelOverlays?: MutationParcel[];
+          manualParcelOverlays?: {
+            parcelNumber?: number;
+            confidence?: number;
+            points?: { x?: number; y?: number }[];
+          }[];
         };
         const totalParcels = data.parcels?.length ?? 1;
         const soldParcelIds = data.soldParcelIds ?? [];
+        const mutationParcels = (data.mutationParcels ?? [])
+          .map((parcel) => ({
+            parcelNumber: Math.trunc(Number(parcel.parcelNumber)),
+            confidence:
+              typeof parcel.confidence === "number"
+                ? parcel.confidence
+                : undefined,
+            points: (parcel.points ?? [])
+              .map((point) => ({
+                x: Number(point.x),
+                y: Number(point.y),
+              }))
+              .filter(
+                (point) => Number.isFinite(point.x) && Number.isFinite(point.y)
+              ),
+          }))
+          .filter((parcel) => parcel.parcelNumber > 0 && parcel.points.length >= 3)
+          .sort((a, b) => a.parcelNumber - b.parcelNumber);
+        const soldParcelOverlays = (data.soldParcelOverlays ?? [])
+          .map((parcel) => ({
+            parcelNumber: Math.trunc(Number(parcel.parcelNumber)),
+            confidence:
+              typeof parcel.confidence === "number"
+                ? parcel.confidence
+                : undefined,
+            points: (parcel.points ?? [])
+              .map((point) => ({
+                x: Number(point.x),
+                y: Number(point.y),
+              }))
+              .filter(
+                (point) => Number.isFinite(point.x) && Number.isFinite(point.y)
+              ),
+          }))
+          .filter((parcel) => parcel.parcelNumber > 0 && parcel.points.length >= 3)
+          .sort((a, b) => a.parcelNumber - b.parcelNumber);
+        const parcelNumbers =
+          mutationParcels.length > 0
+            ? mutationParcels.map((parcel) => parcel.parcelNumber)
+            : Array.from({ length: totalParcels }, (_, idx) => idx + 1);
         const availableParcels =
           typeof data.availableParcels === "number"
             ? data.availableParcels
@@ -983,21 +1189,53 @@ export default function VendorDashboard() {
           totalParcels,
           soldParcelIds,
           availableParcels,
+          mutationFormUrl: data.mutationForm?.url,
+          mutationFormName: data.mutationForm?.name,
+          mutationParcels,
+          soldParcelOverlays,
+          parcelNumbers,
+          manualParcelOverlays: (data.manualParcelOverlays ?? [])
+            .map((overlay) => ({
+              parcelNumber: Math.trunc(Number(overlay.parcelNumber)),
+              confidence:
+                typeof overlay.confidence === "number"
+                  ? overlay.confidence
+                  : undefined,
+              points: (overlay.points ?? [])
+                .map((point) => ({
+                  x: Number(point.x),
+                  y: Number(point.y),
+                }))
+                .filter(
+                  (point) => Number.isFinite(point.x) && Number.isFinite(point.y)
+                ),
+            }))
+            .filter(
+              (overlay) =>
+                overlay.parcelNumber > 0 && overlay.points.length >= 3
+            ),
         });
       });
       setPlots(mapped);
     };
     loadListings();
-  }, [vendorId]);
+  }, [vendorId, portalId, getDashboardScopeId]);
 
   useEffect(() => {
     const loadSales = async () => {
-      if (!vendorId) return;
+      const scopeId = getDashboardScopeId();
+      if (!scopeId) return;
       const pendingSnap = await getDocs(
-        query(collection(db, "pendingSales"), where("vendorId", "==", vendorId))
+        query(
+          collection(db, "pendingSales"),
+          where("dashboardScopeId", "==", scopeId)
+        )
       );
       const salesSnap = await getDocs(
-        query(collection(db, "sales"), where("vendorId", "==", vendorId))
+        query(
+          collection(db, "sales"),
+          where("dashboardScopeId", "==", scopeId)
+        )
       );
       const mapSale = (docSnap: any): SalesRecord => {
         const data = docSnap.data() as SalesRecord & { createdAt?: any };
@@ -1010,7 +1248,7 @@ export default function VendorDashboard() {
       setSalesRecords(salesSnap.docs.map(mapSale));
     };
     loadSales();
-  }, [vendorId]);
+  }, [vendorId, portalId, getDashboardScopeId]);
 
   useEffect(() => {
     const loadInquiries = async () => {
@@ -1018,15 +1256,16 @@ export default function VendorDashboard() {
         setInquiries([]);
         return;
       }
+      const scopeId = getDashboardScopeId();
       const vendorName = vendorProfile?.name;
-      if (!vendorId && !vendorName) return;
+      if (!scopeId && !vendorName) return;
       let snapshot;
       try {
         snapshot = await getDocs(
           query(
             collection(db, "inquiries"),
-            vendorId
-              ? where("vendorId", "==", vendorId)
+            scopeId
+              ? where("dashboardScopeId", "==", scopeId)
               : where("vendorName", "==", vendorName),
             orderBy("createdAt", "desc")
           )
@@ -1035,8 +1274,8 @@ export default function VendorDashboard() {
         snapshot = await getDocs(
           query(
             collection(db, "inquiries"),
-            vendorId
-              ? where("vendorId", "==", vendorId)
+            scopeId
+              ? where("dashboardScopeId", "==", scopeId)
               : where("vendorName", "==", vendorName)
           )
         );
@@ -1068,48 +1307,14 @@ export default function VendorDashboard() {
       setInquiries(items);
     };
     loadInquiries();
-  }, [vendorProfile?.name, vendorId, canViewInquiries, canViewLeads]);
-
-  const refreshDrafts = async (id: string) => {
-    let snapshot;
-    try {
-      snapshot = await getDocs(
-        query(
-          collection(db, "draftListings"),
-          where("vendorId", "==", id),
-          orderBy("updatedAt", "desc")
-        )
-      );
-    } catch {
-      snapshot = await getDocs(
-        query(collection(db, "draftListings"), where("vendorId", "==", id))
-      );
-    }
-    const drafts: DraftListing[] = [];
-    snapshot.forEach((docSnap) => {
-      const data = docSnap.data() as {
-        name?: string;
-        acres?: string;
-        price?: string;
-        step?: 1 | 2 | 3;
-        amenities?: string[];
-        updatedAt?: { toDate: () => Date };
-      };
-      const updatedAt = data.updatedAt?.toDate();
-      drafts.push({
-        id: docSnap.id,
-        name: data.name || "Untitled",
-        acres: data.acres || "",
-        price: data.price || "",
-        updated: updatedAt
-          ? `Edited ${updatedAt.toLocaleDateString()}`
-          : "Saved recently",
-        step: data.step || 1,
-        amenities: data.amenities || [],
-      });
-    });
-    setDraftListings(drafts);
-  };
+  }, [
+    vendorProfile?.name,
+    vendorId,
+    portalId,
+    canViewInquiries,
+    canViewLeads,
+    getDashboardScopeId,
+  ]);
 
   const earthRadius = 6371000;
   const minGpsAccuracyMeters = 3;
@@ -1674,7 +1879,7 @@ export default function VendorDashboard() {
     }
     activeCaptureIdRef.current = parcelId;
     setLocationStatus(
-      `Step 1: Wait for GPS ≤${minGpsAccuracyMeters}m, then start walking.`
+      `Step 1: Wait for GPS <=${minGpsAccuracyMeters}m, then start walking.`
     );
     delete anchorSamplesRef.current[parcelId];
     delete kalmanStateRef.current[parcelId];
@@ -1920,7 +2125,7 @@ export default function VendorDashboard() {
         const accuracy = pos.coords.accuracy ?? 0;
         if (accuracy > minGpsAccuracyMeters) {
           setLocationStatus(
-            `Anchor needs ≤${minGpsAccuracyMeters}m (now ±${Math.round(
+            `Anchor needs <=${minGpsAccuracyMeters}m (now ±${Math.round(
               accuracy
             )}m). Move to open sky.`
           );
@@ -2033,6 +2238,62 @@ export default function VendorDashboard() {
 
   const parseKshInput = (value: string) =>
     Number(value.replace(/[^0-9.]/g, "")) || 0;
+
+  const fileNameWithoutExtension = (name: string) =>
+    name.replace(/\.[^/.]+$/, "");
+
+  const toJpegBlob = (canvas: HTMLCanvasElement, quality = 0.92) =>
+    new Promise<Blob>((resolve, reject) => {
+      canvas.toBlob(
+        (blob) => {
+          if (blob) {
+            resolve(blob);
+            return;
+          }
+          reject(new Error("Could not export image."));
+        },
+        "image/jpeg",
+        quality
+      );
+    });
+
+  const loadImageElement = (file: File) =>
+    new Promise<HTMLImageElement>((resolve, reject) => {
+      const objectUrl = URL.createObjectURL(file);
+      const image = new Image();
+      image.onload = () => {
+        URL.revokeObjectURL(objectUrl);
+        resolve(image);
+      };
+      image.onerror = () => {
+        URL.revokeObjectURL(objectUrl);
+        reject(new Error("Could not read image file."));
+      };
+      image.src = objectUrl;
+    });
+
+  const enhanceMutationImage = async (file: File) => {
+    const image = await loadImageElement(file);
+    const maxDimension = 2600;
+    const scale = Math.min(1, maxDimension / Math.max(image.width, image.height));
+    const width = Math.max(1, Math.round(image.width * scale));
+    const height = Math.max(1, Math.round(image.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("Canvas is not available.");
+    }
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+    context.filter = "contrast(1.05) saturate(1.06)";
+    context.drawImage(image, 0, 0, width, height);
+    const blob = await toJpegBlob(canvas, 0.93);
+    return new File([blob], `${fileNameWithoutExtension(file.name)}.jpg`, {
+      type: "image/jpeg",
+    });
+  };
 
   const generateSaleId = () => {
     const random = Math.floor(100000 + Math.random() * 900000);
@@ -2358,7 +2619,7 @@ export default function VendorDashboard() {
           setLocationStatus(
             `Accuracy ±${Math.round(
               accuracy
-            )}m is too weak. Wait for ≤8m before sampling.`
+            )}m is too weak. Wait for <=8m before sampling.`
           );
           return;
         }
@@ -2561,20 +2822,31 @@ export default function VendorDashboard() {
   ) => {
     setPendingSalesRecords((current) => {
       const activeVendorId = getActiveVendorId();
+      const scopeId = getDashboardScopeId();
       const updated = current.map((sale) => {
         if (sale.id !== saleId) return sale;
         const nextInstallments = updater(sale.installments);
+        const cleanInstallments = nextInstallments.map((installment) => {
+          const cleaned = { ...installment } as SaleInstallment;
+          delete cleaned.proofFile;
+          if (!cleaned.proofName) delete cleaned.proofName;
+          if (!cleaned.proofUrl) delete cleaned.proofUrl;
+          return cleaned;
+        });
         const totalPaid = nextInstallments.reduce((sum, item) => {
           const paid = parseKshInput(item.amount);
           return sum + paid;
         }, 0);
         const remainingBalance = Math.max(sale.netToVendor - totalPaid, 0);
         const fullyPaid = remainingBalance <= 0;
-        if (activeVendorId) {
+        if (activeVendorId && scopeId) {
           setDoc(
             doc(db, "pendingSales", sale.id),
             {
-              installments: nextInstallments,
+              vendorId: activeVendorId,
+              portalId: portalId ?? null,
+              dashboardScopeId: scopeId,
+              installments: cleanInstallments,
               totalPaid,
               remainingBalance,
               fullyPaid,
@@ -2584,7 +2856,7 @@ export default function VendorDashboard() {
         }
         return {
           ...sale,
-          installments: nextInstallments,
+          installments: cleanInstallments,
           totalPaid,
           remainingBalance,
           fullyPaid,
@@ -2600,6 +2872,7 @@ export default function VendorDashboard() {
       return;
     }
     const activeVendorId = getActiveVendorId();
+    const scopeId = getDashboardScopeId();
     setPendingSalesRecords((current) =>
       current.filter((item) => item.id !== sale.id)
     );
@@ -2612,10 +2885,17 @@ export default function VendorDashboard() {
       },
       ...prev,
     ]);
-    if (activeVendorId) {
+    if (activeVendorId && scopeId) {
       await setDoc(doc(db, "sales", sale.id), {
         vendorId: activeVendorId,
-        ...sale,
+        portalId: portalId ?? null,
+        dashboardScopeId: scopeId,
+        ...serializeSaleRecordForFirestore({
+          ...sale,
+          totalPaid: sale.netToVendor,
+          remainingBalance: 0,
+          fullyPaid: true,
+        }),
         totalPaid: sale.netToVendor,
         remainingBalance: 0,
         fullyPaid: true,
@@ -2678,6 +2958,72 @@ export default function VendorDashboard() {
     setExpandedPendingId(null);
   };
 
+  const refreshSoldParcelOverlays = useCallback(
+    async (plot: VendorPlot, soldParcelIds: number[]) => {
+      if (!plot.mutationFormUrl || !soldParcelIds.length) return;
+      if (plot.mutationFormUrl.toLowerCase().includes(".pdf")) return;
+      try {
+        const response = await fetch("/api/mutation-overlay", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            mutationFormUrl: plot.mutationFormUrl,
+            soldParcelIds,
+          }),
+        });
+        if (!response.ok) return;
+        const payload = (await response.json()) as {
+          overlays?: MutationParcel[];
+        };
+        const nextOverlays = (payload.overlays ?? [])
+          .map((overlay) => ({
+            parcelNumber: Math.trunc(Number(overlay.parcelNumber)),
+            confidence:
+              typeof overlay.confidence === "number"
+                ? overlay.confidence
+                : undefined,
+            points: (overlay.points ?? [])
+              .map((point) => ({
+                x: Number(point.x),
+                y: Number(point.y),
+              }))
+              .filter(
+                (point) => Number.isFinite(point.x) && Number.isFinite(point.y)
+              ),
+          }))
+          .filter(
+            (overlay) =>
+              soldParcelIds.includes(overlay.parcelNumber) &&
+              overlay.points.length >= 3
+          );
+        if (!nextOverlays.length) return;
+
+        const merged = [
+          ...(plot.soldParcelOverlays ?? []).filter(
+            (item) =>
+              !nextOverlays.some(
+                (overlay) => overlay.parcelNumber === item.parcelNumber
+              )
+          ),
+          ...nextOverlays,
+        ].sort((a, b) => a.parcelNumber - b.parcelNumber);
+
+        await updateDoc(doc(db, "listings", plot.id), {
+          soldParcelOverlays: merged,
+          updatedAt: serverTimestamp(),
+        });
+        setPlots((current) =>
+          current.map((item) =>
+            item.id === plot.id ? { ...item, soldParcelOverlays: merged } : item
+          )
+        );
+      } catch {
+        // sold state should still succeed if overlay refresh fails
+      }
+    },
+    []
+  );
+
   const markPlotSold = (plotId: string, parcelIndex?: number | null) => {
     setPlots((current) => {
       return current.flatMap((plot) => {
@@ -2700,6 +3046,7 @@ export default function VendorDashboard() {
               availableParcels,
               updatedAt: serverTimestamp(),
             });
+            await refreshSoldParcelOverlays(plot, updatedSold);
           } catch {
             // Keep local state even if persistence fails.
           }
@@ -2765,6 +3112,7 @@ export default function VendorDashboard() {
     }
     if (!saleDraft) return;
     const activeVendorId = getActiveVendorId();
+    const scopeId = getDashboardScopeId();
     const salePrice = parseKshInput(salePriceInput);
     const totalDeductions = charges.reduce((sum, charge) => {
       const fee = parseKshInput(charge.amount);
@@ -2792,15 +3140,18 @@ export default function VendorDashboard() {
     const remainingBalance = Math.max(netToVendor - totalPaid, 0);
 
     const saleId = generateSaleId();
-    let uploadedInstallments = normalizedInstallments.map((installment) => ({
-      ...installment,
-      proofFile: undefined,
-    }));
+    let uploadedInstallments = normalizedInstallments.map((installment) => {
+      const cleaned = { ...installment };
+      delete cleaned.proofFile;
+      return cleaned;
+    });
     if (activeVendorId && normalizedInstallments.length) {
       uploadedInstallments = await Promise.all(
         normalizedInstallments.map(async (installment) => {
           if (!installment.proofFile) {
-            return { ...installment, proofFile: undefined };
+            const rest = { ...installment };
+            delete rest.proofFile;
+            return rest;
           }
           const fileRef = ref(
             storage,
@@ -2809,17 +3160,19 @@ export default function VendorDashboard() {
           try {
             await uploadBytes(fileRef, installment.proofFile);
             const url = await getDownloadURL(fileRef);
+            const rest = { ...installment };
+            delete rest.proofFile;
             return {
-              ...installment,
+              ...rest,
               proofName: installment.proofFile.name,
               proofUrl: url,
-              proofFile: undefined,
             };
           } catch {
+            const rest = { ...installment };
+            delete rest.proofFile;
             return {
-              ...installment,
+              ...rest,
               proofName: installment.proofFile.name,
-              proofFile: undefined,
             };
           }
         })
@@ -2880,24 +3233,28 @@ export default function VendorDashboard() {
       remainingBalance,
       installments: uploadedInstallments,
       soldOn: "Sold today",
-      nextPaymentDate: nextPaymentDate || undefined,
-      attachments: uploadedAttachments.length ? uploadedAttachments : undefined,
+      ...(nextPaymentDate ? { nextPaymentDate } : {}),
+      ...(uploadedAttachments.length ? { attachments: uploadedAttachments } : {}),
     };
     if (remainingBalance > 0) {
       setPendingSalesRecords((current) => [newRecord, ...current]);
-      if (activeVendorId) {
+      if (activeVendorId && scopeId) {
         setDoc(doc(db, "pendingSales", newRecord.id), {
           vendorId: activeVendorId,
-          ...newRecord,
+          portalId: portalId ?? null,
+          dashboardScopeId: scopeId,
+          ...serializeSaleRecordForFirestore(newRecord),
           createdAt: serverTimestamp(),
         });
       }
     } else {
       setSalesRecords((current) => [newRecord, ...current]);
-      if (activeVendorId) {
+      if (activeVendorId && scopeId) {
         setDoc(doc(db, "sales", newRecord.id), {
           vendorId: activeVendorId,
-          ...newRecord,
+          portalId: portalId ?? null,
+          dashboardScopeId: scopeId,
+          ...serializeSaleRecordForFirestore(newRecord),
           createdAt: serverTimestamp(),
         });
       }
@@ -2909,42 +3266,58 @@ export default function VendorDashboard() {
 
   const saveDraftStep = async (nextStep: 1 | 2 | 3) => {
     const activeVendorId = getActiveVendorId();
-    if (!activeVendorId) return;
+    const scopeId = getDashboardScopeId();
+    if (!activeVendorId || !scopeId) return;
     setDraftSaving(true);
     try {
       if (!draftId) {
         const docRef = await addDoc(collection(db, "draftListings"), {
           vendorId: activeVendorId,
+          portalId: portalId ?? null,
+          dashboardScopeId: scopeId,
           name: listingParcel,
           acres: listingSize,
           price: normalizeKshPrice(listingPrice),
+          parcelCount: Math.max(1, Number.parseInt(listingParcelCount, 10) || 1),
           amenities: listingAmenities,
           step: nextStep,
-          nodes: panoramaNodes.map((node) => ({
-            label: node.label,
-            coords: node.coords ?? null,
-            imageUrl: node.imageUrl ?? "",
+          mutationForm: mutationFormUrl
+            ? { name: mutationFormName, url: mutationFormUrl }
+            : null,
+          mutationParcels,
+          plotLocation: anchorTrueCoord ?? null,
+          surroundingImages: surroundingImages.map((image) => ({
+            name: image.name,
+            url: image.url,
           })),
           updatedAt: serverTimestamp(),
           createdAt: serverTimestamp(),
         });
         setDraftId(docRef.id);
-        await refreshDrafts(activeVendorId);
+        await loadDraftsForScope(scopeId);
       } else {
         await updateDoc(doc(db, "draftListings", draftId), {
+          vendorId: activeVendorId,
+          portalId: portalId ?? null,
+          dashboardScopeId: scopeId,
           name: listingParcel,
           acres: listingSize,
           price: normalizeKshPrice(listingPrice),
+          parcelCount: Math.max(1, Number.parseInt(listingParcelCount, 10) || 1),
           amenities: listingAmenities,
           step: nextStep,
-          nodes: panoramaNodes.map((node) => ({
-            label: node.label,
-            coords: node.coords ?? null,
-            imageUrl: node.imageUrl ?? "",
+          mutationForm: mutationFormUrl
+            ? { name: mutationFormName, url: mutationFormUrl }
+            : null,
+          mutationParcels,
+          plotLocation: anchorTrueCoord ?? null,
+          surroundingImages: surroundingImages.map((image) => ({
+            name: image.name,
+            url: image.url,
           })),
           updatedAt: serverTimestamp(),
         });
-        await refreshDrafts(activeVendorId);
+        await loadDraftsForScope(scopeId);
       }
     } finally {
       setDraftSaving(false);
@@ -2952,31 +3325,53 @@ export default function VendorDashboard() {
   };
 
   const finishListing = async () => {
-    if (!vendorId) return;
+    if (!validateListingStepOne()) return;
+    if (!validateListingStepTwo()) {
+      setListingStep(2);
+      return;
+    }
+    if (!validateListingStepThree()) {
+      setListingStep(3);
+      return;
+    }
+    const activeVendorId = getActiveVendorId();
+    const scopeId = getDashboardScopeId();
+    if (!activeVendorId || !scopeId) return;
+    const parcelCount = Math.max(1, Number.parseInt(listingParcelCount, 10) || 1);
     setDraftSaving(true);
     try {
       const listingPayload = {
-        vendorId,
+        vendorId: activeVendorId,
+        portalId: portalId ?? null,
+        dashboardScopeId: scopeId,
+        createdBy: vendorId ?? null,
         vendorName: vendorProfile?.name ?? "Vendor",
         vendorType: vendorProfile?.type ?? "Individual",
         name: listingParcel,
         acres: listingSize,
         price: normalizeKshPrice(listingPrice),
         amenities: listingAmenities,
-        nodes: panoramaNodes.map((node) => ({
-          label: node.label,
-          coords: node.coords ?? null,
-          imageUrl: node.imageUrl ?? "",
+        mutationForm: {
+          name: mutationFormName,
+          url: mutationFormUrl,
+        },
+        mutationParcels,
+        soldParcelOverlays: [],
+        plotLocation: anchorTrueCoord,
+        surroundingImages: surroundingImages.map((image) => ({
+          name: image.name,
+          url: image.url,
         })),
-        parcels: subParcels.map((parcel) => ({
-          name: parcel.name,
-          rawPath: parcel.rawPath,
-          cleanPath: parcel.cleanPath,
+        parcelCount,
+        parcels: Array.from({ length: parcelCount }, (_, idx) => ({
+          name: parcelCount > 1 ? `Parcel ${idx + 1}` : listingParcel || "Parcel 1",
+          rawPath: [],
+          cleanPath: [],
         })),
         createdAt: serverTimestamp(),
       };
       const docRef = await addDoc(collection(db, "listings"), listingPayload);
-      const totalParcels = subParcels.length || 1;
+      const totalParcels = parcelCount;
       const normalizedPrice = normalizeKshPrice(listingPrice);
       setPlots((current) => [
         {
@@ -2989,6 +3384,14 @@ export default function VendorDashboard() {
           totalParcels,
           soldParcelIds: [],
           availableParcels: totalParcels,
+          mutationFormUrl,
+          mutationFormName,
+          mutationParcels,
+          soldParcelOverlays: [],
+          parcelNumbers:
+            mutationParcels.length > 0
+              ? mutationParcels.map((parcel) => parcel.parcelNumber)
+              : Array.from({ length: totalParcels }, (_, idx) => idx + 1),
         },
         ...current,
       ]);
@@ -2996,7 +3399,7 @@ export default function VendorDashboard() {
         await deleteDoc(doc(db, "draftListings", draftId));
         setDraftId(null);
       }
-      await refreshDrafts(vendorId);
+      await loadDraftsForScope(scopeId);
       setNewListingOpen(false);
     } finally {
       setDraftSaving(false);
@@ -3007,8 +3410,31 @@ export default function VendorDashboard() {
     const nameOk = listingParcel.trim().length > 0;
     const sizeOk = listingSize.trim().length > 0;
     const priceOk = normalizeKshPrice(listingPrice).trim().length > 0;
-    if (!nameOk || !sizeOk || !priceOk) {
-      setListingStepError("Fill in parcel name, size, and price to continue.");
+    const parcelCountOk = (Number.parseInt(listingParcelCount, 10) || 0) > 0;
+    if (!nameOk || !sizeOk || !priceOk || !parcelCountOk) {
+      setListingStepError(
+        "Fill in parcel name, size, price, and number of parcels to continue."
+      );
+      return false;
+    }
+    setListingStepError(null);
+    return true;
+  };
+
+  const validateListingStepTwo = () => {
+    if (!mutationFormUrl || !anchorTrueCoord) {
+      setListingStepError(
+        "Upload the mutation form and pick the plot location on satellite map."
+      );
+      return false;
+    }
+    setListingStepError(null);
+    return true;
+  };
+
+  const validateListingStepThree = () => {
+    if (surroundingImages.length === 0) {
+      setListingStepError("Upload at least one surrounding image.");
       return false;
     }
     setListingStepError(null);
@@ -3052,7 +3478,22 @@ export default function VendorDashboard() {
           {canCreateListings && (
             <button
               className="rounded-full bg-[#1f3d2d] px-5 py-2 text-[#f7f3ea] transition hover:bg-[#173124]"
-              onClick={() => setNewListingOpen(true)}
+              onClick={() => {
+                setDraftId(null);
+                setListingParcel("");
+                setListingSize("");
+                setListingPrice("");
+                setListingParcelCount("1");
+                setListingAmenities([]);
+                setListingStep(1);
+                setListingStepError(null);
+                setMutationFormName("");
+                setMutationFormUrl("");
+                setMutationParcels([]);
+                setAnchorTrueCoord(null);
+                setSurroundingImages([]);
+                setNewListingOpen(true);
+              }}
             >
               New listing
             </button>
@@ -3397,15 +3838,22 @@ export default function VendorDashboard() {
                       )}
                       {selectedPlot.totalParcels && (
                         <div className="space-y-2">
+                          {(() => {
+                            const selectableParcels =
+                              selectedPlot.parcelNumbers?.length
+                                ? selectedPlot.parcelNumbers
+                                : Array.from(
+                                    { length: selectedPlot.totalParcels },
+                                    (_, idx) => idx + 1
+                                  );
+                            return (
+                              <>
                           <p className="text-[11px] text-[#5a4a44]">
                             Select a parcel to mark as sold. Nodes are shared
                             across parcels.
                           </p>
                           <div className="flex flex-wrap gap-2">
-                            {Array.from(
-                              { length: selectedPlot.totalParcels },
-                              (_, idx) => idx + 1
-                            ).map((parcelNo) => {
+                                  {selectableParcels.map((parcelNo) => {
                               const isSold =
                                 selectedPlot.soldParcelIds?.includes(parcelNo);
                               const isSelected = selectedParcelIndex === parcelNo;
@@ -3428,8 +3876,11 @@ export default function VendorDashboard() {
                                   Parcel {parcelNo}
                                 </button>
                               );
-                            })}
+                                  })}
                           </div>
+                              </>
+                            );
+                          })()}
                         </div>
                       )}
                       <button
@@ -3503,6 +3954,7 @@ export default function VendorDashboard() {
                       setListingParcel(draft.name);
                       setListingSize(draft.acres);
                       setListingPrice(draft.price);
+                      setListingParcelCount("1");
                       setListingAmenities(draft.amenities);
                       setListingStep(draft.step);
                       setDraftId(draft.id);
@@ -3513,23 +3965,64 @@ export default function VendorDashboard() {
                         );
                         if (snap.exists()) {
                         const data = snap.data() as {
-                          nodes?: {
-                            label: string;
-                            coords?: { lat: number; lng: number };
-                            imageUrl?: string;
-                          }[];
+                          parcelCount?: number;
+                          mutationForm?: { name?: string; url?: string } | null;
+                          mutationParcels?: MutationParcel[];
+                          plotLocation?: { lat?: number; lng?: number } | null;
+                          surroundingImages?: { name?: string; url?: string }[];
                         };
-                        if (data.nodes?.length) {
-                          setPanoramaNodes(
-                            data.nodes.map((node, idx) => ({
-                              id: Date.now() + idx,
-                              label: node.label || `Node ${idx + 1}`,
-                              files: null,
-                              coords: node.coords ?? undefined,
-                              imageUrl: node.imageUrl ?? "",
+                        setListingParcelCount(
+                          String(
+                            Math.max(1, Number(data.parcelCount) || 1)
+                          )
+                        );
+                        setMutationFormName(data.mutationForm?.name ?? "");
+                        setMutationFormUrl(data.mutationForm?.url ?? "");
+                        setMutationParcels(
+                          (data.mutationParcels ?? [])
+                            .map((parcel) => ({
+                              parcelNumber: Math.trunc(Number(parcel.parcelNumber)),
+                              confidence:
+                                typeof parcel.confidence === "number"
+                                  ? parcel.confidence
+                                  : undefined,
+                              points: (parcel.points ?? [])
+                                .map((point) => ({
+                                  x: Number(point.x),
+                                  y: Number(point.y),
+                                }))
+                                .filter(
+                                  (point) =>
+                                    Number.isFinite(point.x) &&
+                                    Number.isFinite(point.y)
+                                ),
                             }))
-                          );
+                            .filter(
+                              (parcel) =>
+                                parcel.parcelNumber > 0 &&
+                                parcel.points.length >= 3
+                            )
+                        );
+                        if (
+                          typeof data.plotLocation?.lat === "number" &&
+                          typeof data.plotLocation?.lng === "number"
+                        ) {
+                          setAnchorTrueCoord({
+                            lat: data.plotLocation.lat,
+                            lng: data.plotLocation.lng,
+                          });
+                        } else {
+                          setAnchorTrueCoord(null);
                         }
+                        setSurroundingImages(
+                          (data.surroundingImages ?? [])
+                            .filter((img) => !!img?.url)
+                            .map((img, idx) => ({
+                              id: Date.now() + idx,
+                              name: img.name || `Surrounding ${idx + 1}`,
+                              url: img.url as string,
+                            }))
+                        );
                         }
                       }
                       setNewListingOpen(true);
@@ -5042,6 +5535,22 @@ export default function VendorDashboard() {
                     className="mt-2 w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
                   />
                 </div>
+                <div>
+                  <label className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                    Number of parcels
+                  </label>
+                  <input
+                    type="number"
+                    min={1}
+                    value={listingParcelCount}
+                    onChange={(event) => {
+                      setListingParcelCount(event.target.value);
+                      setListingStepError(null);
+                    }}
+                    placeholder="e.g. 4"
+                    className="mt-2 w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                  />
+                </div>
                 {listingStepError && (
                   <div className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-[11px] text-[#b3261e] md:col-span-2">
                     {listingStepError}
@@ -5091,651 +5600,234 @@ export default function VendorDashboard() {
               <div className="mt-6 space-y-5 text-xs text-[#3a2f2a]">
                 <div className="rounded-2xl border border-[#eadfce] bg-white px-4 py-4">
                   <p className="text-[10px] uppercase tracking-[0.3em] text-[#a67047]">
-                    Street view instructions
+                    Mutation form
                   </p>
-                  <p className="mt-2 text-xs">
-                    Capture flat photos at equal distances along the path.
+                  <p className="mt-2 text-xs text-[#5a4a44]">
+                    Upload an image or PDF of the mutation form. PDFs are
+                    uploaded as-is, while images are enhanced before upload.
                   </p>
-                  <p className="mt-2 text-xs">
-                    Keep the camera level and facing forward for a smooth tour.
-                  </p>
-                  <p className="mt-2 text-xs">
-                    Upload each node photo below to build the preview.
-                  </p>
+                  <input
+                    type="file"
+                    accept=".pdf,image/*"
+                    onChange={async (event) => {
+                      const file = event.target.files?.[0];
+                      if (!file) return;
+                      const activeVendorId = getActiveVendorId();
+                      if (!activeVendorId) {
+                        setListingStepError("Vendor account is not ready yet.");
+                        return;
+                      }
+                      setMutationFormUploading(true);
+                      setListingStepError(null);
+                      try {
+                        const isPdf =
+                          file.type === "application/pdf" ||
+                          file.name.toLowerCase().endsWith(".pdf");
+                        const processedFile = isPdf
+                          ? file
+                          : await enhanceMutationImage(file);
+                        const fileRef = ref(
+                          storage,
+                          `vendors/${activeVendorId}/mutation-forms/${Date.now()}-${processedFile.name}`
+                        );
+                        await uploadBytes(fileRef, processedFile);
+                        const url = await getDownloadURL(fileRef);
+                        setMutationFormName(
+                          isPdf ? file.name : processedFile.name
+                        );
+                        setMutationFormUrl(url);
+                        if (isPdf) {
+                          setMutationParcels([]);
+                        } else {
+                          try {
+                            const parseResponse = await fetch(
+                              "/api/mutation-parcels",
+                              {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({
+                                  mutationFormUrl: url,
+                                  expectedParcelCount: Math.max(
+                                    1,
+                                    Number.parseInt(listingParcelCount, 10) || 1
+                                  ),
+                                }),
+                              }
+                            );
+                            const parsePayload = (await parseResponse.json()) as {
+                              parcels?: MutationParcel[];
+                              error?: string;
+                            };
+                            if (!parseResponse.ok) {
+                              throw new Error(
+                                parsePayload.error ||
+                                  "Could not extract parcel polygons."
+                              );
+                            }
+                            const parsedParcels = parsePayload.parcels ?? [];
+                            setMutationParcels(parsedParcels);
+                            if (parsedParcels.length > 0) {
+                              setListingParcelCount(String(parsedParcels.length));
+                            }
+                          } catch (error) {
+                            setMutationParcels([]);
+                            const details =
+                              error instanceof Error
+                                ? error.message
+                                : "Unknown parse error.";
+                            setListingStepError(
+                              `Mutation form uploaded, but parcel polygons were not extracted. ${details}`
+                            );
+                          }
+                        }
+                      } catch (error) {
+                        const details =
+                          error instanceof Error ? error.message : "Unknown error.";
+                        setListingStepError(
+                          `Could not upload mutation form (raw PDF mode). ${details}`
+                        );
+                      } finally {
+                        setMutationFormUploading(false);
+                      }
+                    }}
+                    className="mt-3 w-full text-xs text-[#5a4a44] file:mr-3 file:rounded-full file:border-0 file:bg-[#c77d4b] file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white"
+                  />
+                  {mutationFormUrl && (
+                    <p className="mt-2 text-[11px] text-[#6b3e1e]">
+                      Uploaded: {mutationFormName || "Mutation form"}.
+                    </p>
+                  )}
+                  {mutationParcels.length > 0 && (
+                    <p className="mt-1 text-[11px] text-[#1f3d2d]">
+                      Extracted {mutationParcels.length} parcel polygons.
+                    </p>
+                  )}
+                  {mutationFormUploading && (
+                    <p className="mt-2 text-[11px] text-[#6b3e1e]">
+                      Uploading mutation form...
+                    </p>
+                  )}
                 </div>
-                <div className="space-y-3">
-                  {panoramaNodes.map((node) => (
-                    <div
-                      key={node.id}
-                      className="rounded-2xl border border-[#eadfce] bg-white px-4 py-3"
+
+                <div className="rounded-2xl border border-[#eadfce] bg-white px-4 py-4">
+                  <p className="text-[10px] uppercase tracking-[0.3em] text-[#a67047]">
+                    Plot location
+                  </p>
+                  <p className="mt-2 text-xs text-[#5a4a44]">
+                    Pick the exact plot location on the satellite map.
+                  </p>
+                  <div className="mt-3 flex flex-wrap items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setAnchorMapOpen(true)}
+                      className="rounded-full bg-[#1f3d2d] px-4 py-2 text-xs font-semibold text-white"
                     >
-                      <div className="flex items-center justify-between">
-                        <p className="text-xs font-semibold text-[#14110f]">
-                          {node.label}
-                        </p>
-                        {panoramaNodes.length > 1 && (
+                      Open satellite map
+                    </button>
+                    <span className="text-[11px] text-[#5a4a44]">
+                      {anchorTrueCoord
+                        ? `${anchorTrueCoord.lat.toFixed(6)}, ${anchorTrueCoord.lng.toFixed(6)}`
+                        : "No location selected yet."}
+                    </span>
+                  </div>
+                </div>
+
+                {listingStepError && (
+                  <div className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-[11px] text-[#b3261e]">
+                    {listingStepError}
+                  </div>
+                )}
+              </div>
+            )}
+            {listingStep === 3 && (
+              <div className="mt-6 space-y-4 text-xs text-[#3a2f2a]">
+                <div className="rounded-2xl border border-[#eadfce] bg-white px-4 py-4">
+                  <p className="text-[10px] uppercase tracking-[0.3em] text-[#a67047]">
+                    Surrounding images
+                  </p>
+                  <p className="mt-2 text-xs text-[#5a4a44]">
+                    Upload images showing the surroundings of the plot.
+                  </p>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    multiple
+                    onChange={async (event) => {
+                      const files = Array.from(event.target.files ?? []);
+                      if (!files.length) return;
+                      const activeVendorId = getActiveVendorId();
+                      if (!activeVendorId) {
+                        setListingStepError("Vendor account is not ready yet.");
+                        return;
+                      }
+                      setSurroundingUploading(true);
+                      setListingStepError(null);
+                      try {
+                        const uploaded = await Promise.all(
+                          files.map(async (file, idx) => {
+                            const fileRef = ref(
+                              storage,
+                              `vendors/${activeVendorId}/surrounding/${Date.now()}-${idx}-${file.name}`
+                            );
+                            await uploadBytes(fileRef, file);
+                            const url = await getDownloadURL(fileRef);
+                            return {
+                              id: Date.now() + idx,
+                              name: file.name,
+                              url,
+                            };
+                          })
+                        );
+                        setSurroundingImages((current) => [...current, ...uploaded]);
+                      } catch {
+                        setListingStepError(
+                          "Could not upload one or more images. Try again."
+                        );
+                      } finally {
+                        setSurroundingUploading(false);
+                      }
+                    }}
+                    className="mt-3 w-full text-xs text-[#5a4a44] file:mr-3 file:rounded-full file:border-0 file:bg-[#c77d4b] file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white"
+                  />
+                  {surroundingUploading && (
+                    <p className="mt-2 text-[11px] text-[#6b3e1e]">
+                      Uploading surrounding images...
+                    </p>
+                  )}
+                  {surroundingImages.length > 0 && (
+                    <div className="mt-4 space-y-2">
+                      {surroundingImages.map((image) => (
+                        <div
+                          key={image.id}
+                          className="flex items-center justify-between rounded-xl border border-[#eadfce] px-3 py-2"
+                        >
+                          <span className="text-[11px] text-[#5a4a44]">
+                            {image.name}
+                          </span>
                           <button
                             type="button"
                             onClick={() =>
-                              setPanoramaNodes((current) =>
-                                current.filter((item) => item.id !== node.id)
+                              setSurroundingImages((current) =>
+                                current.filter((item) => item.id !== image.id)
                               )
                             }
                             className="rounded-full border border-[#eadfce] px-2 py-1 text-[10px] text-[#5a4a44]"
                           >
                             Remove
                           </button>
-                        )}
-                      </div>
-                      <div className="mt-2 flex items-center gap-3">
-                        <input
-                          type="file"
-                          accept="image/*"
-                          capture="environment"
-                          onChange={(event) => {
-                            const files = event.target.files;
-                            setStreetPreviewError(null);
-                            setPanoramaNodes((current) =>
-                              current.map((item) =>
-                                item.id === node.id
-                                  ? { ...item, files }
-                                  : item
-                              )
-                            );
-                            const file = files?.[0];
-                            const activeVendorId = getActiveVendorId();
-                            if (file && activeVendorId) {
-                              const fileRef = ref(
-                                storage,
-                                `vendors/${activeVendorId}/nodes/${node.id}-${file.name}`
-                              );
-                              uploadBytes(fileRef, file).then(() =>
-                                getDownloadURL(fileRef).then((url) => {
-                                  setPanoramaNodes((current) =>
-                                    current.map((item) =>
-                                      item.id === node.id
-                                        ? { ...item, imageUrl: url }
-                                        : item
-                                    )
-                                  );
-                                })
-                              );
-                            }
-                            if (navigator.geolocation) {
-                              navigator.geolocation.getCurrentPosition(
-                                (pos) => {
-                                  setPanoramaNodes((current) =>
-                                    current.map((item) =>
-                                      item.id === node.id
-                                        ? {
-                                            ...item,
-                                            coords: {
-                                              lat: pos.coords.latitude,
-                                              lng: pos.coords.longitude,
-                                            },
-                                          }
-                                        : item
-                                    )
-                                  );
-                                },
-                                () => {
-                                  setLocationStatus(
-                                    "Unable to capture node location."
-                                  );
-                                },
-                                { enableHighAccuracy: true, timeout: 10000 }
-                              );
-                            }
-                          }}
-                          className="w-full text-xs text-[#5a4a44] file:mr-3 file:rounded-full file:border-0 file:bg-[#c77d4b] file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white"
-                        />
-                      </div>
-                      {node.files?.length ? (
-                        <p className="mt-2 text-[10px] text-[#6b3e1e]">
-                          {node.files.length} file(s) selected
-                          {node.coords
-                            ? ` · ${node.coords.lat.toFixed(
-                                5
-                              )}, ${node.coords.lng.toFixed(5)}`
-                            : ""}
-                        </p>
-                      ) : null}
+                        </div>
+                      ))}
                     </div>
-                  ))}
-                </div>
-                <div className="flex items-center justify-between">
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setPanoramaNodes((current) => [
-                        ...current,
-                        {
-                          id: Date.now(),
-                          label: `Node ${current.length + 1}`,
-                          files: null,
-                          coords: undefined,
-                        },
-                      ])
-                    }
-                    className="rounded-full border border-[#eadfce] px-3 py-2 text-xs text-[#5a4a44]"
-                  >
-                    Add another node
-                  </button>
-                  <span className="text-[10px] text-[#6b3e1e]">
-                    Add as many nodes as needed for a smooth preview.
-                  </span>
-                </div>
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <button
-                    type="button"
-                    onClick={openStreetPreview}
-                    className="rounded-full bg-[#1f3d2d] px-4 py-2 text-xs font-semibold text-white"
-                  >
-                    Complete node collection
-                  </button>
-                  {streetPreviewError ? (
-                    <span className="text-[10px] text-[#b3261e]">
-                      {streetPreviewError}
-                    </span>
-                  ) : (
-                    <span className="text-[10px] text-[#6b3e1e]">
-                      Build a street preview from your captured nodes.
-                    </span>
                   )}
                 </div>
-                {streetPreviewOpen && previewNodes.length > 0 && (
-                  <div className="rounded-2xl border border-[#eadfce] bg-white px-4 py-4">
-                    <div className="flex items-center justify-between">
-                      <p className="text-[10px] uppercase tracking-[0.3em] text-[#a67047]">
-                        Street view preview
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => setStreetPreviewOpen(false)}
-                        className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#5a4a44]"
-                      >
-                        Close
-                      </button>
-                    </div>
-                    <div className="relative mt-4 overflow-hidden rounded-2xl border border-[#eadfce] bg-[#fbf8f3] perspective-1000">
-                      {streetPreviewPrevIndex !== null && (
-                        <div
-                          key={`street-prev-${streetPreviewPrevIndex}`}
-                          className={`absolute inset-0 bg-cover bg-center transition-opacity duration-300 ease-out street-pan-3d ${
-                            streetPreviewAnimating ? "opacity-0" : "opacity-100"
-                          } street-swipe-out`}
-                          style={{
-                            backgroundImage: `url(${previewNodes[streetPreviewPrevIndex]?.imageUrl})`,
-                            backgroundSize: "130% 100%",
-                            backgroundPosition: `${streetPanValue}% 50%`,
-                            transform: `translateX(${(50 - streetPanValue) * 0.04}%) rotateY(${(streetPanValue - 50) * 0.08}deg)`,
-                          }}
-                        />
-                      )}
-                      <div
-                        key={`street-current-${streetPreviewIndex}`}
-                        className={`relative h-64 w-full bg-cover bg-center transition-all duration-300 ease-out street-pan street-pan-3d street-swipe-in ${
-                          streetPreviewAnimating
-                            ? "scale-[1.02] opacity-90"
-                            : "scale-100 opacity-100"
-                        }`}
-                        style={{
-                          backgroundImage: `url(${previewNodes[streetPreviewIndex]?.imageUrl})`,
-                          backgroundSize: "130% 100%",
-                          backgroundPosition: `${streetPanValue}% 50%`,
-                          transform: `translateX(${(50 - streetPanValue) * 0.04}%) rotateY(${(streetPanValue - 50) * 0.08}deg)`,
-                        }}
-                        onDoubleClick={handlePreviewAdvance}
-                        onTouchEnd={handlePreviewTouch}
-                        role="button"
-                        tabIndex={0}
-                        aria-label="Advance to next street view node"
-                      />
-                      <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center justify-between px-4 py-3 text-[10px] text-white">
-                        <span className="rounded-full bg-black/40 px-2 py-1">
-                          Node {streetPreviewIndex + 1} of{" "}
-                          {previewNodes.length}
-                        </span>
-                        <span className="rounded-full bg-black/40 px-2 py-1">
-                          Double tap to advance
-                        </span>
-                      </div>
-                    </div>
-                    <div className="mt-3 flex items-center gap-3">
-                      <span className="rounded-full border border-[#eadfce] bg-white px-3 py-1 text-[10px] text-[#5a4a44]">
-                        Pan
-                      </span>
-                      <input
-                        type="range"
-                        min={0}
-                        max={100}
-                        value={streetPanValue}
-                        onChange={(event) =>
-                          setStreetPanValue(Number(event.target.value))
-                        }
-                        className="w-full accent-[#1f3d2d]"
-                      />
-                    </div>
-                    <style jsx>{`
-                      .perspective-1000 {
-                        perspective: 1000px;
-                      }
-                      .street-pan-3d {
-                        transform-style: preserve-3d;
-                      }
-                      .street-swipe-in {
-                        animation: streetSwipeIn 520ms cubic-bezier(0.2, 0.8, 0.2, 1);
-                      }
-                      .street-swipe-out {
-                        animation: streetSwipeOut 520ms cubic-bezier(0.2, 0.8, 0.2, 1);
-                      }
-                      @keyframes streetSwipeIn {
-                        0% {
-                          opacity: 0;
-                          transform: translateX(8%) scale(1.2);
-                          filter: blur(6px);
-                        }
-                        60% {
-                          opacity: 0.95;
-                          transform: translateX(2%) scale(1.02);
-                          filter: blur(1.5px);
-                        }
-                        100% {
-                          opacity: 1;
-                          transform: translateX(0%) scale(1);
-                          filter: blur(0px);
-                        }
-                      }
-                      @keyframes streetSwipeOut {
-                        0% {
-                          opacity: 1;
-                          transform: translateX(0%) scale(1);
-                          filter: blur(0px);
-                        }
-                        60% {
-                          opacity: 0.6;
-                          transform: translateX(-4%) scale(1.08);
-                          filter: blur(3px);
-                        }
-                        100% {
-                          opacity: 0;
-                          transform: translateX(-10%) scale(1.12);
-                          filter: blur(6px);
-                        }
-                      }
-                    `}</style>
+
+                {listingStepError && (
+                  <div className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-[11px] text-[#b3261e]">
+                    {listingStepError}
                   </div>
                 )}
               </div>
             )}
-
-            {listingStep === 3 && (
-              <div className="mt-6 space-y-4 text-xs text-[#3a2f2a]">
-                <div className="rounded-2xl border border-[#eadfce] bg-white px-4 py-4">
-                  <p className="text-[10px] uppercase tracking-[0.3em] text-[#a67047]">
-                    Multiple parcels
-                  </p>
-                  <p className="mt-2 text-xs">
-                    If this land was subdivided, add each parcel name before
-                    mapping.
-                  </p>
-                  <div className="mt-3 space-y-2">
-                    {subParcels.map((parcel, index) => (
-                      <div
-                        key={parcel.id}
-                        className="flex items-center gap-2"
-                      >
-                        <input
-                          type="text"
-                          value={parcel.name}
-                          onChange={(event) =>
-                            setSubParcels((current) =>
-                              current.map((item) =>
-                                item.id === parcel.id
-                                  ? { ...item, name: event.target.value }
-                                  : item
-                              )
-                            )
-                          }
-                          placeholder={`Parcel ${index + 1} name`}
-                          className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-xs text-[#14110f]"
-                        />
-                        {subParcels.length > 1 && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setSubParcels((current) =>
-                                current.filter((item) => item.id !== parcel.id)
-                              )
-                            }
-                            className="rounded-full border border-[#eadfce] px-3 py-2 text-[10px] text-[#5a4a44]"
-                          >
-                            Remove
-                          </button>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() =>
-                      setSubParcels((current) => [
-                        ...current,
-                        {
-                          id: Date.now(),
-                          name: `Parcel ${current.length + 1}`,
-                          mappingActive: false,
-                          previewOpen: false,
-                          rawPath: [],
-                          cleanPath: [],
-                          gpsAccuracy: undefined,
-                          signalStrength: 0,
-                          waitingForFix: false,
-                          hasGoodFix: false,
-                          anchorPoint: null,
-                          anchorLocked: false,
-                          anchorLocking: false,
-                        },
-                      ])
-                    }
-                    className="mt-3 rounded-full border border-[#eadfce] px-3 py-2 text-xs text-[#5a4a44]"
-                  >
-                    Add another parcel
-                  </button>
-                </div>
-                <div className="rounded-2xl border border-[#eadfce] bg-white px-4 py-4">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <p className="text-[10px] uppercase tracking-[0.3em] text-[#a67047]">
-                        Map preview
-                      </p>
-                      <p className="mt-2 text-xs text-[#5a4a44]">
-                        Preview and adjust parcel positions on the map.
-                      </p>
-                      <div className="mt-3 flex flex-wrap items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setAnchorMapOpen(true)}
-                          className="rounded-full border border-[#eadfce] bg-white px-3 py-2 text-[10px] font-semibold text-[#5a4a44]"
-                        >
-                          Pick anchor on map
-                        </button>
-                        <button
-                          type="button"
-                          onClick={startAnchorSession}
-                          className="rounded-full bg-[#1f3d2d] px-3 py-2 text-[10px] font-semibold text-white"
-                        >
-                          Start anchor
-                        </button>
-                        <button
-                          type="button"
-                          onClick={stopAnchorSession}
-                          className="rounded-full border border-[#eadfce] bg-white px-3 py-2 text-[10px] font-semibold text-[#5a4a44]"
-                        >
-                          Stop anchor
-                        </button>
-                      </div>
-                      <div className="mt-3 flex flex-wrap items-center gap-2">
-                        <input
-                          value={anchorInputSessionId}
-                          onChange={(event) => setAnchorInputSessionId(event.target.value)}
-                          placeholder="Enter session ID to join"
-                          className="w-full max-w-[220px] rounded-full border border-[#eadfce] bg-white px-3 py-2 text-[10px] text-[#14110f]"
-                        />
-                        <button
-                          type="button"
-                          onClick={joinAnchorSession}
-                          className="rounded-full border border-[#eadfce] bg-white px-3 py-2 text-[10px] font-semibold text-[#5a4a44]"
-                        >
-                          Join session
-                        </button>
-                      </div>
-                      <p className="mt-2 text-[10px] text-[#7a5f54]">
-                        {anchorStatus ?? "Anchor is off."}
-                        {anchorData ? (
-                          <>
-                            {" "}
-                            · ±{Math.round(anchorData.accuracy)}m ·{" "}
-                            {anchorData.lat.toFixed(5)}, {anchorData.lng.toFixed(5)}
-                          </>
-                        ) : null}
-                        {anchorSessionId ? ` · Session ${anchorSessionId}` : ""}
-                      </p>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setMapPreviewOpen(true)}
-                      className="rounded-full bg-[#1f3d2d] px-4 py-2 text-xs font-semibold text-white"
-                    >
-                      Open map preview
-                    </button>
-                  </div>
-                </div>
-                <div className="rounded-2xl border border-[#eadfce] bg-white px-4 py-4">
-                  <p className="text-[10px] uppercase tracking-[0.3em] text-[#a67047]">
-                    Mapping instructions
-                  </p>
-                  <ul className="mt-3 space-y-2 text-xs">
-                    <li>
-                      Step 1: (Optional) Start anchor, then go to a beacon.
-                    </li>
-                    <li>
-                      Step 2: Tap "Capture corner" while standing on the beacon.
-                    </li>
-                    <li>
-                      Step 3: Stay still for 30 seconds while sampling.
-                    </li>
-                    <li>
-                      Step 4: Move to the next beacon and repeat.
-                    </li>
-                    <li>
-                      Step 5: Tap "Done · Preview" to review the boundary.
-                    </li>
-                  </ul>
-                  {locationStatus && (
-                    <p className="mt-3 text-[11px] text-[#6b3e1e]">
-                      {locationStatus}
-                    </p>
-                  )}
-                </div>
-                <div className="space-y-3">
-                  {subParcels.map((parcel) => (
-                    <div
-                      key={parcel.id}
-                      className="rounded-2xl border border-[#eadfce] bg-white px-4 py-4"
-                    >
-                      <div className="flex items-center justify-between">
-                        <p className="text-xs font-semibold text-[#14110f]">
-                          {parcel.name || "Untitled parcel"}
-                        </p>
-                        <span className="rounded-full border border-[#eadfce] px-2 py-1 text-[10px] text-[#5a4a44]">
-                          Mapping
-                        </span>
-                      </div>
-                      <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                        <div className="flex items-center gap-3">
-                          <span
-                            className={`inline-flex h-3 w-3 rounded-full ${
-                              parcel.samplingCorner
-                                ? "animate-pulse bg-[#c77d4b]"
-                                : "bg-[#eadfce]"
-                            }`}
-                          />
-                          <p className="text-xs text-[#5a4a44]">
-                            {parcel.samplingCorner
-                              ? "Sampling... keep still"
-                              : "Ready to capture"}
-                          </p>
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            onClick={() => captureCorner(parcel.id)}
-                            className="rounded-full bg-[#1f3d2d] px-4 py-2 text-xs font-semibold text-white"
-                            disabled={parcel.samplingCorner}
-                          >
-                            {parcel.samplingCorner ? "Sampling..." : "Capture corner"}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => clearCorners(parcel.id)}
-                            className="rounded-full border border-[#1f3d2d]/30 px-4 py-2 text-xs font-semibold text-[#1f3d2d]"
-                            disabled={parcel.samplingCorner}
-                          >
-                            Clear corners
-                          </button>
-                          {parcel.cleanPath.length >= 3 && !parcel.samplingCorner && (
-                            <button
-                              type="button"
-                              onClick={() => setMapPreviewOpen(true)}
-                              className="rounded-full border border-[#eadfce] bg-white px-4 py-2 text-xs font-semibold text-[#5a4a44]"
-                            >
-                              Done · Preview
-                            </button>
-                          )}
-                        </div>
-                        <p className="text-[11px] text-[#7a5f54]">
-                          {parcel.samplingCorner
-                            ? "Next: Stay still until sampling completes."
-                            : parcel.cleanPath.length >= 3
-                              ? "Next: Tap Done · Preview to review the shape."
-                              : "Next: Move to the next beacon and capture."}
-                        </p>
-                      </div>
-                      {parcel.previewOpen && (
-                        <div className="mt-4 rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-4 py-4">
-                          <div className="flex items-start justify-between">
-                            <div>
-                              <p className="text-[10px] uppercase tracking-[0.3em] text-[#a67047]">
-                                Mapping preview
-                              </p>
-                              <p className="mt-2 text-xs text-[#5a4a44]">
-                                Review the captured boundary before finishing.
-                              </p>
-                            </div>
-                            <button
-                              type="button"
-                              onClick={() =>
-                                setSubParcels((current) =>
-                                  current.map((item) =>
-                                    item.id === parcel.id
-                                      ? { ...item, previewOpen: false }
-                                      : item
-                                  )
-                                )
-                              }
-                              className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#5a4a44]"
-                            >
-                              Hide
-                            </button>
-                          </div>
-                <div className="mt-4 rounded-2xl border border-dashed border-[#eadfce] bg-white p-3">
-                  <svg
-                    width="100%"
-                    height="140"
-                    viewBox="0 0 240 140"
-                    className="w-full"
-                  >
-                    <path
-                      d={buildSvgPath(parcel.rawPath, 240, 140)}
-                      fill="none"
-                      stroke="#d8c7b6"
-                      strokeWidth="2"
-                      strokeDasharray="4 4"
-                    />
-                    <path
-                      d={buildSvgPath(parcel.cleanPath, 240, 140)}
-                      fill="none"
-                      stroke="#1f3d2d"
-                      strokeWidth="3"
-                    />
-                  </svg>
-                </div>
-                          <div className="mt-4 flex flex-wrap items-center justify-between text-[11px] text-[#5a4a44]">
-                            <span>
-                              Raw points: {parcel.rawPath.length} · Corners:{" "}
-                              {parcel.cleanPath.length}
-                            </span>
-                            <span>
-                              Perimeter:{" "}
-                              {(
-                                pathLength(parcel.cleanPath) / 1000
-                              ).toFixed(2)}{" "}
-                              km (est.)
-                            </span>
-                          </div>
-                          <div className="mt-3 rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-[10px] text-[#5a4a44]">
-                            <div className="flex items-center justify-between">
-                              <span>Confidence gauge</span>
-                              <span>
-                                {Math.round(parcel.overallConfidence ?? 0)}%
-                              </span>
-                            </div>
-                            <div className="mt-2 h-2 w-full rounded-full bg-[#eadfce]">
-                              <div
-                                className="h-2 rounded-full bg-[#1f3d2d]"
-                                style={{
-                                  width: `${Math.round(
-                                    parcel.overallConfidence ?? 0
-                                  )}%`,
-                                }}
-                              />
-                            </div>
-                            {parcel.lastCornerConfidence !== undefined && (
-                              <div className="mt-2 flex items-center justify-between text-[10px] text-[#7a5f54]">
-                                <span>
-                                  Last corner:{" "}
-                                  {Math.round(parcel.lastCornerConfidence)}%
-                                </span>
-                                <span>
-                                  Samples: {parcel.cornerConfidences?.length ?? 0}
-                                </span>
-                              </div>
-                            )}
-                          </div>
-                          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[10px] text-[#7a5f54]">
-                            <span>
-                              Corners captured: {parcel.cleanPath.length}
-                            </span>
-                            {parcel.cleanPath.length >= 3 && !parcel.samplingCorner && (
-                              <span>Ready to preview</span>
-                            )}
-                          </div>
-                          {parcel.samplingCorner && (
-                            <div className="mt-3 space-y-2 text-[10px] text-[#6b3e1e]">
-                              <div className="flex flex-wrap items-center justify-between gap-2">
-                                <span>
-                                  Sampling... {parcel.cornerCountdown ?? 0}s
-                                </span>
-                                <span>
-                                  Samples: {parcel.cornerSampleCount ?? 0}
-                                </span>
-                                <span>
-                                  Signal {Math.round(parcel.signalStrength ?? 0)}%
-                                </span>
-                              </div>
-                              <div className="flex flex-wrap items-center justify-between gap-2">
-                                <span className="text-[#7a5f54]">
-                                  HRI: {Math.round(parcel.cornerHri ?? 0)}%
-                                </span>
-                                <span
-                                  className={
-                                    getHriStatus(parcel.cornerHri ?? 0).tone
-                                  }
-                                >
-                                  {getHriStatus(parcel.cornerHri ?? 0).label}
-                                </span>
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
             <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2">
                 {listingStep > 1 && (
@@ -5760,6 +5852,9 @@ export default function VendorDashboard() {
                     type="button"
                     onClick={async () => {
                       if (listingStep === 1 && !validateListingStepOne()) {
+                        return;
+                      }
+                      if (listingStep === 2 && !validateListingStepTwo()) {
                         return;
                       }
                       const nextStep = (listingStep === 1 ? 2 : 3) as 1 | 2 | 3;
@@ -5797,13 +5892,13 @@ export default function VendorDashboard() {
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-xs uppercase tracking-[0.35em] text-[#a67047]">
-                  Anchor landmark
+                  Plot location
                 </p>
                 <p className="mt-2 text-lg font-semibold text-[#14110f]">
-                  Tap a visible landmark
+                  Pick the plot point
                 </p>
                 <p className="mt-1 text-xs text-[#5a4a44]">
-                  Tap the exact gate/post on the map to lock the true point.
+                  Tap the exact position of the plot on the satellite map.
                 </p>
               </div>
               <button
@@ -5875,7 +5970,7 @@ export default function VendorDashboard() {
             </div>
             <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs text-[#5a4a44]">
               <span>
-                Selected:{" "}
+                Selected location:{" "}
                 {anchorTrueCoord
                   ? `${anchorTrueCoord.lat.toFixed(6)}, ${anchorTrueCoord.lng.toFixed(
                       6
@@ -5887,7 +5982,7 @@ export default function VendorDashboard() {
                 onClick={() => setAnchorMapOpen(false)}
                 className="rounded-full bg-[#1f3d2d] px-4 py-2 text-xs font-semibold text-white"
               >
-                Use this anchor
+                Use this location
               </button>
             </div>
           </div>

@@ -31,67 +31,139 @@ export default function Home() {
           vendorType?: "Company" | "Individual";
           vendorId?: string;
           soldParcelIds?: number[];
+          plotLocation?: { lat?: number; lng?: number };
           parcels?: { name?: string; cleanPath?: { lat: number; lng: number }[] }[];
-          nodes?: { label?: string; imageUrl?: string }[];
+          parcelCount?: number;
+          surroundingImages?: { name?: string; url?: string }[];
+          mutationForm?: { name?: string; url?: string } | null;
+          mutationParcels?: {
+            parcelNumber?: number;
+            confidence?: number;
+            points?: { x?: number; y?: number }[];
+          }[];
+          soldParcelOverlays?: {
+            parcelNumber?: number;
+            confidence?: number;
+            points?: { x?: number; y?: number }[];
+          }[];
+          manualParcelOverlays?: {
+            parcelNumber?: number;
+            confidence?: number;
+            points?: { x?: number; y?: number }[];
+          }[];
         };
         const parcels = data.parcels ?? [];
         const soldParcelIds = data.soldParcelIds ?? [];
-        const nodes = data.nodes ?? [];
+        const surroundingImages = data.surroundingImages ?? [];
         const priceLabel =
           data.price && data.price.toLowerCase().includes("ksh")
             ? data.price
             : data.price
             ? `Ksh ${data.price}`
             : "Ksh 0";
-        const totalParcels = parcels.length || 1;
-
-        const addPlotFromPath = (
-          cleanPath: { lat: number; lng: number }[],
-          idx: number,
-          parcelName?: string
-        ) => {
-          if (cleanPath.length < 3) return;
-          const parcelNumber = idx + 1;
-          const isSold = soldParcelIds.includes(parcelNumber);
-          const polygon = cleanPath.map((point) => [point.lng, point.lat]) as [
-            number,
-            number
-          ][];
-          const center = polygon.reduce(
-            (acc, point) => [acc[0] + point[0], acc[1] + point[1]],
-            [0, 0]
-          );
-          const centerLngLat: [number, number] = [
-            center[0] / polygon.length,
-            center[1] / polygon.length,
-          ];
-          mapped.push({
-            id: `${docSnap.id}-${idx}`,
-            label: data.name || parcelName || `Parcel ${idx + 1}`,
-            size: data.acres || "",
-            price: priceLabel,
-            center: centerLngLat,
-            startPoint: polygon[0],
-            polygon,
-            vendor: data.vendorName || "Vendor",
-            vendorId: data.vendorId,
-            vendorType: data.vendorType || "Individual",
-            amenities: data.amenities || [],
-            totalParcels,
-            availableParcels: totalParcels,
-            isSold,
-            nodes,
-          });
-        };
-
-        if (parcels.length) {
-          parcels.forEach((parcel, idx) =>
-            addPlotFromPath(parcel.cleanPath ?? [], idx, parcel.name)
-          );
-          return;
-        }
-
-        addPlotFromPath([], 0);
+        const totalParcels = data.parcelCount || parcels.length || 1;
+        const availableParcels = Math.max(totalParcels - soldParcelIds.length, 0);
+        const firstPath =
+          parcels.find((parcel) => (parcel.cleanPath?.length ?? 0) >= 3)
+            ?.cleanPath ?? [];
+        const polygon = firstPath.map((point) => [point.lng, point.lat]) as [
+          number,
+          number
+        ][];
+        const centerFromPolygon: [number, number] | null =
+          polygon.length >= 3
+            ? [
+                polygon.reduce((sum, point) => sum + point[0], 0) / polygon.length,
+                polygon.reduce((sum, point) => sum + point[1], 0) / polygon.length,
+              ]
+            : null;
+        const centerFromPin =
+          typeof data.plotLocation?.lng === "number" &&
+          typeof data.plotLocation?.lat === "number"
+            ? ([data.plotLocation.lng, data.plotLocation.lat] as [number, number])
+            : null;
+        const center = centerFromPin ?? centerFromPolygon;
+        if (!center) return;
+        mapped.push({
+          id: docSnap.id,
+          label: data.name || "Parcel",
+          size: data.acres || "",
+          price: priceLabel,
+          center,
+          startPoint: center,
+          polygon: polygon.length >= 3 ? polygon : undefined,
+          vendor: data.vendorName || "Vendor",
+          vendorId: data.vendorId,
+          vendorType: data.vendorType || "Individual",
+          amenities: data.amenities || [],
+          totalParcels,
+          availableParcels,
+          isSold: availableParcels <= 0,
+          soldParcelIds,
+          surroundingImages,
+          mutationForm: data.mutationForm ?? undefined,
+          mutationParcels: (data.mutationParcels ?? [])
+            .map((parcel) => ({
+              parcelNumber: Math.trunc(Number(parcel.parcelNumber)),
+              confidence:
+                typeof parcel.confidence === "number"
+                  ? parcel.confidence
+                  : undefined,
+              points: (parcel.points ?? [])
+                .map((point) => ({
+                  x: Number(point.x),
+                  y: Number(point.y),
+                }))
+                .filter(
+                  (point) => Number.isFinite(point.x) && Number.isFinite(point.y)
+                ),
+            }))
+            .filter(
+              (parcel) => parcel.parcelNumber > 0 && parcel.points.length >= 3
+            ),
+          soldParcelOverlays: (data.soldParcelOverlays ?? [])
+            .map((overlay) => ({
+              parcelNumber: Math.trunc(Number(overlay.parcelNumber)),
+              confidence:
+                typeof overlay.confidence === "number"
+                  ? overlay.confidence
+                  : undefined,
+              points: (overlay.points ?? [])
+                .map((point) => ({
+                  x: Number(point.x),
+                  y: Number(point.y),
+                }))
+                .filter(
+                  (point) => Number.isFinite(point.x) && Number.isFinite(point.y)
+                ),
+            }))
+            .filter(
+              (overlay) =>
+                overlay.parcelNumber > 0 && overlay.points.length >= 3
+            ),
+          manualParcelOverlays: (data.manualParcelOverlays ?? [])
+            .map((overlay) => ({
+              parcelNumber: Number(overlay.parcelNumber),
+              confidence:
+                typeof overlay.confidence === "number"
+                  ? overlay.confidence
+                  : undefined,
+              points: (overlay.points ?? [])
+                .map((point) => ({
+                  x: Number(point.x),
+                  y: Number(point.y),
+                }))
+                .filter(
+                  (point) => Number.isFinite(point.x) && Number.isFinite(point.y)
+                ),
+            }))
+            .filter(
+              (overlay) =>
+                Number.isFinite(overlay.parcelNumber) &&
+                overlay.parcelNumber > 0 &&
+                overlay.points.length >= 3
+            ) as Plot["manualParcelOverlays"],
+        });
       });
       setRemotePlots(mapped);
     };
@@ -377,7 +449,12 @@ export default function Home() {
               startPoint: plot.startPoint,
               totalParcels: plot.totalParcels,
               availableParcels: plot.availableParcels,
-              nodes: plot.nodes,
+              soldParcelIds: plot.soldParcelIds,
+              surroundingImages: plot.surroundingImages,
+              mutationForm: plot.mutationForm,
+              mutationParcels: plot.mutationParcels,
+              soldParcelOverlays: plot.soldParcelOverlays,
+              manualParcelOverlays: plot.manualParcelOverlays,
             }))}
             onFiltersClick={() => setFiltersOpen(true)}
           />
