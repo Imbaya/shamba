@@ -196,25 +196,25 @@ export default function PortalPage() {
 
   if (authLoading || portalsLoading) {
     return (
-      <div className="min-h-screen bg-[radial-gradient(circle_at_top,_#f9f1e6,_#f2ede4_55%,_#efe7d8)] text-[#14110f]">
+      <div className="min-h-screen bg-[radial-gradient(circle_at_12%_10%,_rgba(209,167,65,0.22),_transparent_28%),radial-gradient(circle_at_88%_12%,_rgba(74,160,255,0.2),_transparent_34%),linear-gradient(120deg,_#050b1a_0%,_#07122a_45%,_#091631_100%)] text-[#e8eefc]">
         <div className="mx-auto flex min-h-screen max-w-6xl flex-col items-center justify-center px-4 py-10 sm:px-6">
-          <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-3xl bg-[#1f3d2d] shadow-[0_18px_50px_-30px_rgba(20,17,15,0.6)]">
+          <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-3xl bg-[#0d1f3f] shadow-[0_18px_50px_-30px_rgba(0,0,0,0.9)]">
             <img src="/logo.png" alt="PlotTrust logo" className="h-10 w-10" />
           </div>
           <div className="mt-6 text-center">
-            <p className="text-xs uppercase tracking-[0.35em] text-[#c77d4b]">
+            <p className="text-xs uppercase tracking-[0.35em] text-[#d1a741]">
               Portal setup
             </p>
-            <h1 className="mt-2 font-serif text-2xl text-[#14110f] sm:text-3xl">
+            <h1 className="mt-2 font-serif text-2xl text-[#f2f6ff] sm:text-3xl">
               Loading your portals
             </h1>
-            <p className="mt-2 text-sm text-[#5a4a44]">
+            <p className="mt-2 text-sm text-[#c6d6f7]">
               Fetching your portal data.
             </p>
           </div>
           <div className="mt-6 flex items-center gap-3">
-            <div className="h-10 w-10 animate-spin rounded-full border-2 border-[#d8c7b6] border-t-[#1f3d2d]" />
-            <div className="text-xs text-[#7a5f54]">
+            <div className="h-10 w-10 animate-spin rounded-full border-2 border-[#2c4f8a] border-t-[#d1a741]" />
+            <div className="text-xs text-[#9eb6e1]">
               Syncing portal records
             </div>
           </div>
@@ -224,17 +224,17 @@ export default function PortalPage() {
   }
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_#f9f1e6,_#f2ede4_55%,_#efe7d8)] text-[#14110f]">
+    <div className="min-h-screen bg-[radial-gradient(circle_at_12%_10%,_rgba(209,167,65,0.22),_transparent_28%),radial-gradient(circle_at_88%_12%,_rgba(74,160,255,0.2),_transparent_34%),linear-gradient(120deg,_#050b1a_0%,_#07122a_45%,_#091631_100%)] text-[#e8eefc]">
       <div className="mx-auto max-w-6xl px-4 py-10 sm:px-6">
         <div className="flex items-center justify-between">
           <div>
-            <p className="text-xs uppercase tracking-[0.35em] text-[#a67047]">
+            <p className="text-xs uppercase tracking-[0.35em] text-[#d1a741]">
               Portal setup
             </p>
-            <h1 className="mt-2 font-serif text-2xl text-[#14110f]">
+            <h1 className="mt-2 font-serif text-2xl text-[#f2f6ff]">
               Welcome{userName ? `, ${userName}` : ""}.
             </h1>
-            <p className="mt-2 text-sm text-[#5a4a44]">
+            <p className="mt-2 text-sm text-[#c6d6f7]">
               Create or open a vendor portal.
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
@@ -243,7 +243,7 @@ export default function PortalPage() {
                 onClick={() => {
                   router.push("/");
                 }}
-                className="rounded-full border border-[#eadfce] bg-white px-4 py-2 text-xs font-semibold text-[#1f3d2d]"
+                className="rounded-full border border-[#4a78c7]/60 bg-[#09142b]/70 px-4 py-2 text-xs font-semibold text-[#d6e5ff]"
               >
                 Home
               </button>
@@ -253,7 +253,7 @@ export default function PortalPage() {
                   setShowCompanyForm(true);
                   setShowIndividualForm(false);
                 }}
-                className="rounded-full border border-[#eadfce] bg-white px-4 py-2 text-xs font-semibold text-[#1f3d2d]"
+                className="rounded-full border border-[#4a78c7]/60 bg-[#09142b]/70 px-4 py-2 text-xs font-semibold text-[#d6e5ff]"
               >
                 Register company portal
               </button>
@@ -263,7 +263,7 @@ export default function PortalPage() {
                   setShowIndividualForm(true);
                   setShowCompanyForm(false);
                 }}
-                className="rounded-full border border-[#eadfce] bg-white px-4 py-2 text-xs font-semibold text-[#1f3d2d]"
+                className="rounded-full border border-[#4a78c7]/60 bg-[#09142b]/70 px-4 py-2 text-xs font-semibold text-[#d6e5ff]"
               >
                 Register individual portal
               </button>
@@ -272,7 +272,7 @@ export default function PortalPage() {
                 onClick={() => {
                   window.location.href = "/purchases";
                 }}
-                className="rounded-full border border-[#eadfce] bg-white px-4 py-2 text-xs font-semibold text-[#1f3d2d]"
+                className="rounded-full border border-[#4a78c7]/60 bg-[#09142b]/70 px-4 py-2 text-xs font-semibold text-[#d6e5ff]"
               >
                 Manage purchases
               </button>
@@ -281,35 +281,35 @@ export default function PortalPage() {
         </div>
 
         {error && (
-          <div className="mt-4 rounded-2xl border border-[#eadfce] bg-white px-4 py-3 text-[11px] text-[#b3261e]">
+          <div className="mt-4 rounded-2xl border border-[#6a2f2f] bg-[#211419] px-4 py-3 text-[11px] text-[#ffb4ab]">
             {error}
           </div>
         )}
 
         <div className="mt-6 grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
-          <div className="rounded-3xl border border-[#eadfce] bg-white p-5">
-            <p className="text-xs uppercase tracking-[0.3em] text-[#a67047]">
+          <div className="rounded-3xl border border-[#284675] bg-[#0a1834]/88 p-5">
+            <p className="text-xs uppercase tracking-[0.3em] text-[#d1a741]">
               Your portals
             </p>
             <div className="mt-4 space-y-3">
               {portals.length === 0 ? (
-                <p className="text-xs text-[#5a4a44]">
+                <p className="text-xs text-[#c6d6f7]">
                   No portals yet. Create one below.
                 </p>
               ) : (
                 portals.map((portal) => (
                   <div
                     key={portal.id}
-                    className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-4 py-3 text-sm"
+                    className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-3 text-sm"
                   >
                     <div>
-                      <p className="text-xs uppercase tracking-[0.3em] text-[#a67047]">
+                      <p className="text-xs uppercase tracking-[0.3em] text-[#d1a741]">
                         {portal.type === "company" ? "Company" : "Individual"}
                       </p>
-                      <p className="mt-1 font-semibold text-[#14110f]">
+                      <p className="mt-1 font-semibold text-[#f2f6ff]">
                         {portal.name}
                       </p>
-                      <p className="mt-1 text-[11px] text-[#5a4a44]">
+                      <p className="mt-1 text-[11px] text-[#c6d6f7]">
                         {portal.location || "Location not set"} ·{" "}
                         {portal.createdAt ?? "Recently created"}
                       </p>
@@ -317,7 +317,7 @@ export default function PortalPage() {
                     <button
                       type="button"
                       onClick={() => openPortal(portal.id)}
-                      className="rounded-full bg-[#1f3d2d] px-4 py-2 text-xs font-semibold text-white"
+                      className="rounded-full bg-[#d1a741] px-4 py-2 text-xs font-semibold text-[#091631]"
                     >
                       Open portal
                     </button>
@@ -330,18 +330,18 @@ export default function PortalPage() {
           <div className="space-y-6">
 
             <div
-              className={`hidden rounded-3xl border border-[#eadfce] bg-white p-5 ${
+              className={`hidden rounded-3xl border border-[#284675] bg-[#0a1834]/88 p-5 ${
                 hydrated && showCompanyForm ? "lg:block" : "lg:hidden"
               }`}
             >
               <div className="flex items-start justify-between">
-                <p className="text-xs uppercase tracking-[0.3em] text-[#a67047]">
+                <p className="text-xs uppercase tracking-[0.3em] text-[#d1a741]">
                   Register company portal
                 </p>
                 <button
                   type="button"
                   onClick={() => setShowCompanyForm(false)}
-                  className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#5a4a44]"
+                  className="rounded-full border border-[#4a78c7]/60 px-3 py-1 text-[10px] text-[#d6e5ff]"
                 >
                   Close
                 </button>
@@ -401,7 +401,7 @@ export default function PortalPage() {
                   type="button"
                   disabled={loading}
                   onClick={() => createPortal("company")}
-                  className="rounded-full bg-[#1f3d2d] px-4 py-2 text-xs font-semibold text-white"
+                  className="rounded-full bg-[#d1a741] px-4 py-2 text-xs font-semibold text-[#091631]"
                 >
                   {loading ? "Creating..." : "Create company portal"}
                 </button>
@@ -409,18 +409,18 @@ export default function PortalPage() {
             </div>
 
             <div
-              className={`hidden rounded-3xl border border-[#eadfce] bg-white p-5 ${
+              className={`hidden rounded-3xl border border-[#284675] bg-[#0a1834]/88 p-5 ${
                 hydrated && showIndividualForm ? "lg:block" : "lg:hidden"
               }`}
             >
               <div className="flex items-start justify-between">
-                <p className="text-xs uppercase tracking-[0.3em] text-[#a67047]">
+                <p className="text-xs uppercase tracking-[0.3em] text-[#d1a741]">
                   Register individual portal
                 </p>
                 <button
                   type="button"
                   onClick={() => setShowIndividualForm(false)}
-                  className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#5a4a44]"
+                  className="rounded-full border border-[#4a78c7]/60 px-3 py-1 text-[10px] text-[#d6e5ff]"
                 >
                   Close
                 </button>
@@ -451,7 +451,7 @@ export default function PortalPage() {
                   type="button"
                   disabled={loading}
                   onClick={() => createPortal("individual")}
-                  className="rounded-full bg-[#1f3d2d] px-4 py-2 text-xs font-semibold text-white"
+                  className="rounded-full bg-[#d1a741] px-4 py-2 text-xs font-semibold text-[#091631]"
                 >
                   {loading ? "Creating..." : "Create individual portal"}
                 </button>
@@ -461,15 +461,15 @@ export default function PortalPage() {
 
           {showCompanyForm && (
             <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6 lg:hidden">
-              <div className="w-full max-w-lg overflow-hidden rounded-3xl border border-[#eadfce] bg-white p-5 shadow-[0_30px_70px_-40px_rgba(20,17,15,0.6)]">
+              <div className="w-full max-w-lg overflow-hidden rounded-3xl border border-[#284675] bg-[#0a1834]/95 p-5 shadow-[0_30px_70px_-40px_rgba(0,0,0,0.9)]">
                 <div className="flex items-start justify-between">
-                  <p className="text-xs uppercase tracking-[0.3em] text-[#a67047]">
+                  <p className="text-xs uppercase tracking-[0.3em] text-[#d1a741]">
                     Register company portal
                   </p>
                   <button
                     type="button"
                     onClick={() => setShowCompanyForm(false)}
-                    className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#5a4a44]"
+                    className="rounded-full border border-[#4a78c7]/60 px-3 py-1 text-[10px] text-[#d6e5ff]"
                   >
                     Close
                   </button>
@@ -529,7 +529,7 @@ export default function PortalPage() {
                     type="button"
                     disabled={loading}
                     onClick={() => createPortal("company")}
-                    className="rounded-full bg-[#1f3d2d] px-4 py-2 text-xs font-semibold text-white"
+                    className="rounded-full bg-[#d1a741] px-4 py-2 text-xs font-semibold text-[#091631]"
                   >
                     {loading ? "Creating..." : "Create company portal"}
                   </button>
@@ -540,15 +540,15 @@ export default function PortalPage() {
 
           {showIndividualForm && (
             <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6 lg:hidden">
-              <div className="w-full max-w-lg overflow-hidden rounded-3xl border border-[#eadfce] bg-white p-5 shadow-[0_30px_70px_-40px_rgba(20,17,15,0.6)]">
+              <div className="w-full max-w-lg overflow-hidden rounded-3xl border border-[#284675] bg-[#0a1834]/95 p-5 shadow-[0_30px_70px_-40px_rgba(0,0,0,0.9)]">
                 <div className="flex items-start justify-between">
-                  <p className="text-xs uppercase tracking-[0.3em] text-[#a67047]">
+                  <p className="text-xs uppercase tracking-[0.3em] text-[#d1a741]">
                     Register individual portal
                   </p>
                   <button
                     type="button"
                     onClick={() => setShowIndividualForm(false)}
-                    className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#5a4a44]"
+                    className="rounded-full border border-[#4a78c7]/60 px-3 py-1 text-[10px] text-[#d6e5ff]"
                   >
                     Close
                   </button>
@@ -579,7 +579,7 @@ export default function PortalPage() {
                     type="button"
                     disabled={loading}
                     onClick={() => createPortal("individual")}
-                    className="rounded-full bg-[#1f3d2d] px-4 py-2 text-xs font-semibold text-white"
+                    className="rounded-full bg-[#d1a741] px-4 py-2 text-xs font-semibold text-[#091631]"
                   >
                     {loading ? "Creating..." : "Create individual portal"}
                   </button>

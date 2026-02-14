@@ -21,6 +21,7 @@ import {
   updateDoc,
   where,
 } from "firebase/firestore";
+import type { DocumentData, QueryDocumentSnapshot } from "firebase/firestore";
 import { auth, db, realtimeDb, storage } from "../../lib/firebase";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 import {
@@ -1195,25 +1196,25 @@ export default function VendorDashboard() {
   }, [selectedLeadId]);
 
   const loadingView = (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_#f9f1e6,_#f2ede4_55%,_#efe7d8)] text-[#14110f]">
+    <div className="min-h-screen bg-[radial-gradient(circle_at_12%_10%,_rgba(209,167,65,0.22),_transparent_28%),radial-gradient(circle_at_88%_12%,_rgba(74,160,255,0.2),_transparent_34%),linear-gradient(120deg,_#050b1a_0%,_#07122a_45%,_#091631_100%)] text-[#e8eefc]">
       <div className="mx-auto flex min-h-screen max-w-6xl flex-col items-center justify-center px-4 py-10 sm:px-6">
-        <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-3xl bg-[#1f3d2d] shadow-[0_18px_50px_-30px_rgba(20,17,15,0.6)]">
+        <div className="flex h-16 w-16 items-center justify-center overflow-hidden rounded-3xl bg-[#0d1f3f] shadow-[0_18px_50px_-30px_rgba(0,0,0,0.9)]">
           <img src="/logo.png" alt="PlotTrust logo" className="h-10 w-10" />
         </div>
         <div className="mt-6 text-center">
-          <p className="text-xs uppercase tracking-[0.35em] text-[#c77d4b]">
+          <p className="text-xs uppercase tracking-[0.35em] text-[#d1a741]">
             Vendor workspace
           </p>
-          <h1 className="mt-2 font-serif text-2xl text-[#14110f] sm:text-3xl">
+          <h1 className="mt-2 font-serif text-2xl text-[#f2f6ff] sm:text-3xl">
             Loading your portal
           </h1>
-          <p className="mt-2 text-sm text-[#5a4a44]">
+          <p className="mt-2 text-sm text-[#c6d6f7]">
             Preparing your listings, members, and sales.
           </p>
         </div>
         <div className="mt-6 flex items-center gap-3">
-          <div className="h-10 w-10 animate-spin rounded-full border-2 border-[#d8c7b6] border-t-[#1f3d2d]" />
-          <div className="text-xs text-[#7a5f54]">
+          <div className="h-10 w-10 animate-spin rounded-full border-2 border-[#2c4f8a] border-t-[#d1a741]" />
+          <div className="text-xs text-[#9eb6e1]">
             Syncing workspace data
           </div>
         </div>
@@ -1587,11 +1588,10 @@ export default function VendorDashboard() {
       const salesSnap = await getDocs(
         query(collection(db, "sales"), ...salesFilters)
       );
-      const mapSale = (docSnap: {
-        id: string;
-        data: () => SalesRecord;
-      }): SalesRecord => {
-        const data = docSnap.data();
+      const mapSale = (
+        docSnap: QueryDocumentSnapshot<DocumentData>
+      ): SalesRecord => {
+        const data = docSnap.data() as SalesRecord;
         return {
           ...data,
           id: docSnap.id,
@@ -4372,14 +4372,14 @@ export default function VendorDashboard() {
   };
 
   return userLoaded ? (
-    <div className="min-h-screen overflow-x-hidden bg-[radial-gradient(circle_at_top,_#f9f1e6,_#f2ede4_55%,_#efe7d8)] text-[#14110f]">
+    <div className="min-h-screen overflow-x-hidden bg-[radial-gradient(circle_at_12%_10%,_rgba(209,167,65,0.22),_transparent_28%),radial-gradient(circle_at_88%_12%,_rgba(74,160,255,0.2),_transparent_34%),linear-gradient(120deg,_#050b1a_0%,_#07122a_45%,_#091631_100%)] text-[#e8eefc]">
       <header className="mx-auto flex max-w-6xl flex-col gap-4 px-4 py-4 sm:px-6 md:flex-row md:items-center md:justify-between">
         <div className="text-left">
-          <p className="text-xs uppercase tracking-[0.35em] text-[#c77d4b]">
+          <p className="text-xs uppercase tracking-[0.35em] text-[#d1a741]">
             Vendor workspace
           </p>
           <h1
-            className="mt-2 font-serif text-2xl text-[#14110f] sm:text-3xl"
+            className="mt-2 font-serif text-2xl text-[#f2f6ff] sm:text-3xl"
             suppressHydrationWarning
           >
             {greetingText}
@@ -4390,12 +4390,12 @@ export default function VendorDashboard() {
             type="button"
             onClick={() => handleTabChange("members")}
             disabled={!canManageMembers}
-            className="rounded-full border border-[#eadfce] px-4 py-2 text-[#5a4a44] transition hover:border-[#c9b8a6] disabled:opacity-60 lg:hidden"
+            className="rounded-full border border-[#4a78c7]/60 bg-[#09142b]/70 px-4 py-2 text-[#d6e5ff] transition hover:border-[#6f9df0] disabled:opacity-60 lg:hidden"
           >
             Members
           </button>
           <button
-            className="rounded-full border border-[#1f3d2d]/30 px-4 py-2 text-[#1f3d2d] transition hover:border-[#1f3d2d]"
+            className="rounded-full border border-[#4a78c7]/60 bg-[#09142b]/70 px-4 py-2 text-[#d6e5ff] transition hover:border-[#6f9df0]"
             onClick={() => {
               if (!canViewLeads) {
                 denyAccess("Access denied. Contact admin for addition.");
@@ -4407,7 +4407,7 @@ export default function VendorDashboard() {
           </button>
           {canCreateListings && (
             <button
-              className="rounded-full bg-[#1f3d2d] px-5 py-2 text-[#f7f3ea] transition hover:bg-[#173124]"
+              className="rounded-full bg-[#d1a741] px-5 py-2 text-[#091631] transition hover:bg-[#dfbc66]"
               onClick={() => {
                 setDraftId(null);
                 setListingParcel("");
@@ -4433,7 +4433,7 @@ export default function VendorDashboard() {
             onClick={() => {
               window.location.href = "/portal";
             }}
-            className="rounded-full border border-[#eadfce] px-4 py-2 text-[#5a4a44] transition hover:border-[#c9b8a6]"
+            className="rounded-full border border-[#4a78c7]/60 bg-[#09142b]/70 px-4 py-2 text-[#d6e5ff] transition hover:border-[#6f9df0]"
           >
             Back to portals
           </button>
@@ -4442,7 +4442,7 @@ export default function VendorDashboard() {
             onClick={() => {
               window.location.href = "/";
             }}
-            className="rounded-full border border-[#eadfce] px-4 py-2 text-[#5a4a44] transition hover:border-[#c9b8a6]"
+            className="rounded-full border border-[#4a78c7]/60 bg-[#09142b]/70 px-4 py-2 text-[#d6e5ff] transition hover:border-[#6f9df0]"
           >
             Logout
           </button>
@@ -4451,12 +4451,12 @@ export default function VendorDashboard() {
 
       {accessDenied && (
         <div className="mx-auto max-w-6xl px-4 sm:px-6">
-          <div className="mb-4 flex items-start justify-between gap-3 rounded-2xl border border-[#f1d1c8] bg-[#fff4f1] px-4 py-3 text-[11px] text-[#8d2a1c]">
+          <div className="mb-4 flex items-start justify-between gap-3 rounded-2xl border border-[#6a2f2f] bg-[#211419] px-4 py-3 text-[11px] text-[#ffb4ab]">
             <span>{accessDenied}</span>
             <button
               type="button"
               onClick={() => setAccessDenied(null)}
-              className="rounded-full border border-[#f1d1c8] px-3 py-1 text-[10px]"
+              className="rounded-full border border-[#8a4c4c] px-3 py-1 text-[10px]"
             >
               Dismiss
             </button>
@@ -4466,9 +4466,9 @@ export default function VendorDashboard() {
 
       <main className="mx-auto grid max-w-6xl gap-6 px-4 pb-24 sm:px-6 lg:grid-cols-[260px_minmax(0,1fr)]">
         <aside className="space-y-6">
-          <section className="rounded-3xl bg-[#fbf8f3] p-5 shadow-[0_20px_60px_-40px_rgba(20,17,15,0.5)]">
+          <section className="rounded-3xl border border-[#284675] bg-[#0a1834]/88 p-5 shadow-[0_25px_70px_-45px_rgba(0,0,0,0.9)]">
             <div className="flex items-center gap-3">
-              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#1f3d2d] text-lg font-semibold text-[#f4f1ea]">
+              <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-[#0d1f3f] text-lg font-semibold text-[#f6f9ff]">
                 {(userDisplayName || "AD")
                   .split(" ")
                   .slice(0, 2)
@@ -4477,13 +4477,13 @@ export default function VendorDashboard() {
               </div>
               <div>
                 <p
-                  className="text-sm font-semibold text-[#14110f]"
+                  className="text-sm font-semibold text-[#f2f6ff]"
                   suppressHydrationWarning
                 >
                   {userDisplayName}
                 </p>
                 <p
-                  className="text-xs text-[#5a4a44]"
+                  className="text-xs text-[#c6d6f7]"
                   suppressHydrationWarning
                 >
                   {portalDisplayName} · {portalLocation}
@@ -4496,10 +4496,10 @@ export default function VendorDashboard() {
               ].map((item) => (
                 <div
                   key={item.label}
-                  className="flex items-center justify-between rounded-2xl border border-[#eadfce] bg-white px-4 py-3"
+                  className="flex items-center justify-between rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-3"
                 >
-                  <span className="text-[#7a5f54]">{item.label}</span>
-                  <span className="font-semibold text-[#14110f]">
+                  <span className="text-[#9eb6e1]">{item.label}</span>
+                  <span className="font-semibold text-[#f2f6ff]">
                     {item.value}
                   </span>
                 </div>
@@ -4507,7 +4507,7 @@ export default function VendorDashboard() {
             </div>
           </section>
 
-          <section className="rounded-3xl border border-[#eadfce] bg-white p-5 lg:block hidden">
+          <section className="rounded-3xl border border-[#284675] bg-[#0a1834]/88 p-5 lg:block hidden">
           
             <div className="mt-4 space-y-3 text-sm font-medium">
               {[
@@ -4538,8 +4538,8 @@ export default function VendorDashboard() {
                   }
                   className={`w-full rounded-2xl px-4 py-3 text-left transition ${
                     activeTab === tab.id
-                      ? "bg-[#1f3d2d] text-white"
-                      : "border border-[#eadfce] bg-white text-[#5a4a44]"
+                      ? "bg-[#2454a0] text-white"
+                      : "border border-[#284675] bg-[#09142b]/70 text-[#c6d6f7]"
                   } ${
                     canAccessTab(tab.id)
                       ? ""
@@ -4552,11 +4552,11 @@ export default function VendorDashboard() {
             </div>
           </section>
 
-          <section className="rounded-3xl border border-[#eadfce] bg-white p-5 lg:block hidden">
-            <p className="text-xs uppercase tracking-[0.35em] text-[#a67047]">
+          <section className="rounded-3xl border border-[#284675] bg-[#0a1834]/88 p-5 lg:block hidden">
+            <p className="text-xs uppercase tracking-[0.35em] text-[#d1a741]">
               Branding
             </p>
-            <p className="mt-2 text-xs text-[#5a4a44]">
+            <p className="mt-2 text-xs text-[#c6d6f7]">
               Upload your logo for your vendor profile.
             </p>
             <div className="mt-3 space-y-3 text-xs">
@@ -4574,14 +4574,14 @@ export default function VendorDashboard() {
                   };
                   reader.readAsDataURL(file);
                 }}
-                className="text-xs text-[#5a4a44] file:mr-3 file:rounded-full file:border-0 file:bg-[#c77d4b] file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white"
+                className="text-xs text-[#c6d6f7] file:mr-3 file:rounded-full file:border-0 file:bg-[#c77d4b] file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white"
               />
               {vendorLogo ? (
-                <div className="rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-3 py-2 text-[10px] text-[#6b3e1e]">
+                <div className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-[10px] text-[#d6e5ff]">
                   Logo uploaded
                 </div>
               ) : (
-                <div className="rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-3 py-2 text-[10px] text-[#6b3e1e]">
+                <div className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-[10px] text-[#d6e5ff]">
                   No logo yet
                 </div>
               )}
@@ -4590,10 +4590,10 @@ export default function VendorDashboard() {
         </aside>
 
         <section className="space-y-6">
-          <div className="rounded-3xl border border-[#eadfce] bg-white p-5 min-h-[520px]">
+          <div className="rounded-3xl border border-[#284675] bg-[#0a1834]/88 p-5 min-h-[520px]">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-xs uppercase tracking-[0.3em] text-[#a67047]">
+                <p className="text-xs uppercase tracking-[0.3em] text-[#d1a741]">
                   {activeTab === "active"
                     ? "My plots"
                     : activeTab === "drafts"
@@ -4610,7 +4610,7 @@ export default function VendorDashboard() {
                     ? "Members"
                     : "Sales"}
                 </p>
-                <h2 className="mt-2 font-serif text-2xl text-[#14110f]">
+                <h2 className="mt-2 font-serif text-2xl text-[#f2f6ff]">
                   {activeTab === "active"
                     ? "Active listings"
                     : activeTab === "drafts"
@@ -4635,40 +4635,40 @@ export default function VendorDashboard() {
                     const query = portalId ? `?portalId=${portalId}` : "";
                     window.location.href = `/vendor/overview${query}`;
                   }}
-                  className="rounded-full border border-[#1f3d2d]/30 px-4 py-2 text-xs font-medium text-[#1f3d2d] transition hover:border-[#1f3d2d]"
+                  className="rounded-full border border-[#4a78c7]/60 bg-[#09142b]/70 px-4 py-2 text-xs font-medium text-[#d6e5ff] transition hover:border-[#6f9df0]"
                 >
                   Overview
                 </button>
               ) : (
-                <button className="rounded-full border border-[#1f3d2d]/30 px-4 py-2 text-xs font-medium text-[#1f3d2d] transition hover:border-[#1f3d2d]">
+                <button className="rounded-full border border-[#4a78c7]/60 bg-[#09142b]/70 px-4 py-2 text-xs font-medium text-[#d6e5ff] transition hover:border-[#6f9df0]">
                   View all
                 </button>
               )}
             </div>
 
             {isPortalAdmin && (
-              <div className="mt-4 grid gap-3 rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-4 py-3 text-xs md:grid-cols-3">
+              <div className="mt-4 grid gap-3 rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-3 text-xs md:grid-cols-3">
                 <div>
-                  <p className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                  <p className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
                     Total posted value
                   </p>
-                  <p className="mt-2 text-sm font-semibold text-[#14110f]">
+                  <p className="mt-2 text-sm font-semibold text-[#f2f6ff]">
                     Ksh {totalPostedValue.toLocaleString()}
                   </p>
                 </div>
                 <div>
-                  <p className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                  <p className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
                     Existing value
                   </p>
-                  <p className="mt-2 text-sm font-semibold text-[#14110f]">
+                  <p className="mt-2 text-sm font-semibold text-[#f2f6ff]">
                     Ksh {totalExistingValue.toLocaleString()}
                   </p>
                 </div>
                 <div>
-                  <p className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                  <p className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
                     Sold value
                   </p>
-                  <p className="mt-2 text-sm font-semibold text-[#14110f]">
+                  <p className="mt-2 text-sm font-semibold text-[#f2f6ff]">
                     Ksh {totalSoldValue.toLocaleString()}
                   </p>
                 </div>
@@ -4676,11 +4676,11 @@ export default function VendorDashboard() {
             )}
             {!isPortalAdmin &&
               (activeTab === "pending" || activeTab === "sales") && (
-                <div className="mt-4 rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-4 py-3 text-xs">
-                  <p className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                <div className="mt-4 rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-3 text-xs">
+                  <p className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
                     Your sold summary
                   </p>
-                  <p className="mt-2 text-sm font-semibold text-[#14110f]">
+                  <p className="mt-2 text-sm font-semibold text-[#f2f6ff]">
                     Ksh {agentSoldValueSoFar.toLocaleString()}
                   </p>
                 </div>
@@ -4698,7 +4698,7 @@ export default function VendorDashboard() {
                           active: !current.active,
                         }))
                       }
-                      className="rounded-full border border-[#eadfce] bg-white px-3 py-1 text-[11px] text-[#5a4a44]"
+                      className="rounded-full border border-[#365a94] bg-[#09142b]/70 px-3 py-1 text-[11px] text-[#d6e5ff]"
                     >
                       {searchVisible.active ? "Hide search" : "Search"}
                     </button>
@@ -4713,7 +4713,7 @@ export default function VendorDashboard() {
                           }))
                         }
                         placeholder="Search listings..."
-                        className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-xs text-[#14110f] sm:w-64"
+                        className="w-full rounded-2xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-xs text-[#e8eefc] sm:w-64"
                       />
                     )}
                   </div>
@@ -4741,31 +4741,31 @@ export default function VendorDashboard() {
                         className={`flex w-full flex-wrap items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-left transition ${
                           selectedPlotId === plot.id
                             ? "border-[#1f3d2d] bg-[#f7f2ea]"
-                            : "border-[#eadfce] bg-[#fbf8f3]"
+                            : "border-[#365a94] bg-[#09142b]/70"
                         }`}
                       >
                         <div>
-                          <p className="text-xs uppercase tracking-[0.3em] text-[#a67047]">
+                          <p className="text-xs uppercase tracking-[0.3em] text-[#d1a741]">
                             {plot.id}
                           </p>
-                          <p className="mt-1 font-semibold text-[#14110f]">
+                          <p className="mt-1 font-semibold text-[#f2f6ff]">
                             {plot.name}
                           </p>
-                          <p className="mt-1 text-xs text-[#5a4a44]">
+                          <p className="mt-1 text-xs text-[#c6d6f7]">
                             {plot.acres} · {plot.price}
                           </p>
                           {totalParcels > 1 && (
-                            <p className="mt-1 text-[11px] text-[#6b3e1e]">
+                            <p className="mt-1 text-[11px] text-[#d6e5ff]">
                               Parcels: {availableParcels} available of{" "}
                               {totalParcels}
                             </p>
                           )}
                         </div>
                         <div className="flex items-center gap-3 text-xs">
-                          <span className="rounded-full border border-[#1f3d2d]/30 bg-white px-3 py-1 text-[#1f3d2d]">
+                          <span className="rounded-full border border-[#365a94] bg-[#09142b]/70 px-3 py-1 text-[#1f3d2d]">
                             {plot.status}
                           </span>
-                          <span className="rounded-full border border-[#eadfce] bg-white px-3 py-1 text-[#7a5f54]">
+                          <span className="rounded-full border border-[#284675] bg-[#09142b]/70 px-3 py-1 text-[#9eb6e1]">
                             {plot.confidence} confidence
                           </span>
                         </div>
@@ -4774,23 +4774,23 @@ export default function VendorDashboard() {
                   })}
                 </div>
 
-                <div className="order-1 rounded-3xl border border-[#eadfce] bg-white p-4 text-xs lg:order-2">
-                  <p className="text-[10px] uppercase tracking-[0.3em] text-[#a67047]">
+                <div className="order-1 rounded-3xl border border-[#284675] bg-[#09142b]/70 p-4 text-xs lg:order-2">
+                  <p className="text-[10px] uppercase tracking-[0.3em] text-[#d1a741]">
                     Details
                   </p>
                   {selectedPlot ? (
                     <div className="mt-3 space-y-2">
-                      <p className="text-xs font-semibold text-[#14110f]">
+                      <p className="text-xs font-semibold text-[#f2f6ff]">
                         {selectedPlot.name}
                       </p>
-                      <p className="text-[#5a4a44]">
+                      <p className="text-[#c6d6f7]">
                         {selectedPlot.acres} · {selectedPlot.price}
                       </p>
-                      <p className="text-[#5a4a44]">
+                      <p className="text-[#c6d6f7]">
                         Status: {selectedPlot.status}
                       </p>
                       {selectedPlot.totalParcels && (
-                        <p className="text-[#6b3e1e]">
+                        <p className="text-[#d6e5ff]">
                           Parcels:{" "}
                           {selectedPlot.availableParcels ??
                             selectedPlot.totalParcels -
@@ -4810,7 +4810,7 @@ export default function VendorDashboard() {
                                   );
                             return (
                               <>
-                          <p className="text-[11px] text-[#5a4a44]">
+                          <p className="text-[11px] text-[#c6d6f7]">
                             Select a parcel to mark as sold. Nodes are shared
                             across parcels.
                           </p>
@@ -4829,10 +4829,10 @@ export default function VendorDashboard() {
                                   disabled={isSold}
                                   className={`rounded-full px-3 py-1 text-[11px] transition ${
                                     isSold
-                                      ? "cursor-not-allowed bg-[#eadfce] text-[#8a7a70]"
+                                      ? "cursor-not-allowed bg-[#eadfce] text-[#9eb6e1]"
                                       : isSelected
-                                      ? "bg-[#1f3d2d] text-white"
-                                      : "border border-[#eadfce] bg-white text-[#5a4a44]"
+                                      ? "bg-[#2454a0] text-white"
+                                      : "border border-[#284675] bg-[#09142b]/70 text-[#c6d6f7]"
                                   }`}
                                 >
                                   Parcel {parcelNo}
@@ -4850,7 +4850,7 @@ export default function VendorDashboard() {
                         onClick={() =>
                           openSaleModal(selectedPlot.id, selectedParcelIndex)
                         }
-                        className="mt-3 w-full rounded-full bg-[#1f3d2d] px-3 py-2 text-[11px] font-semibold text-white"
+                        className="mt-3 w-full rounded-full bg-[#2454a0] px-3 py-2 text-[11px] font-semibold text-white"
                         disabled={
                           !canAddSales ||
                           (selectedPlot.totalParcels && selectedPlot.totalParcels > 1
@@ -4862,7 +4862,7 @@ export default function VendorDashboard() {
                       </button>
                     </div>
                   ) : (
-                    <p className="mt-3 text-[#5a4a44]">
+                    <p className="mt-3 text-[#c6d6f7]">
                       Select a listing to view details.
                     </p>
                   )}
@@ -4881,7 +4881,7 @@ export default function VendorDashboard() {
                         drafts: !current.drafts,
                       }))
                     }
-                    className="rounded-full border border-[#eadfce] bg-white px-3 py-1 text-[11px] text-[#5a4a44]"
+                    className="rounded-full border border-[#365a94] bg-[#09142b]/70 px-3 py-1 text-[11px] text-[#d6e5ff]"
                   >
                     {searchVisible.drafts ? "Hide search" : "Search"}
                   </button>
@@ -4896,7 +4896,7 @@ export default function VendorDashboard() {
                         }))
                       }
                       placeholder="Search drafts..."
-                      className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-xs text-[#14110f] sm:w-64"
+                      className="w-full rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-xs text-[#f2f6ff] sm:w-64"
                     />
                   )}
                 </div>
@@ -4989,20 +4989,20 @@ export default function VendorDashboard() {
                       }
                       setNewListingOpen(true);
                     }}
-                    className="flex w-full flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-4 py-3 text-left transition hover:border-[#c9b8a6]"
+                    className="flex w-full flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-3 text-left transition hover:border-[#c9b8a6]"
                   >
                     <div>
-                      <p className="text-xs uppercase tracking-[0.3em] text-[#a67047]">
+                      <p className="text-xs uppercase tracking-[0.3em] text-[#d1a741]">
                         {draft.id}
                       </p>
-                      <p className="mt-1 font-semibold text-[#14110f]">
+                      <p className="mt-1 font-semibold text-[#f2f6ff]">
                         {draft.name}
                       </p>
-                      <p className="mt-1 text-xs text-[#5a4a44]">
+                      <p className="mt-1 text-xs text-[#c6d6f7]">
                         {draft.acres} · {draft.price}
                       </p>
                     </div>
-                    <span className="rounded-full border border-[#eadfce] bg-white px-3 py-1 text-xs text-[#7a5f54]">
+                    <span className="rounded-full border border-[#284675] bg-[#09142b]/70 px-3 py-1 text-xs text-[#9eb6e1]">
                       {draft.updated}
                     </span>
                   </button>
@@ -5021,7 +5021,7 @@ export default function VendorDashboard() {
                         inquiries: !current.inquiries,
                       }))
                     }
-                    className="rounded-full border border-[#eadfce] bg-white px-3 py-1 text-[11px] text-[#5a4a44]"
+                    className="rounded-full border border-[#365a94] bg-[#09142b]/70 px-3 py-1 text-[11px] text-[#d6e5ff]"
                   >
                     {searchVisible.inquiries ? "Hide search" : "Search"}
                   </button>
@@ -5036,7 +5036,7 @@ export default function VendorDashboard() {
                         }))
                       }
                       placeholder="Search inquiries..."
-                      className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-xs text-[#14110f] sm:w-64"
+                      className="w-full rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-xs text-[#f2f6ff] sm:w-64"
                     />
                   )}
                 </div>
@@ -5057,32 +5057,32 @@ export default function VendorDashboard() {
                     className={`flex w-full flex-wrap items-center justify-between gap-3 rounded-2xl border px-4 py-3 text-left transition ${
                       selectedInquiryId === lead.id
                         ? "border-[#1f3d2d] bg-[#f7f2ea]"
-                        : "border-[#eadfce] bg-[#fbf8f3]"
+                        : "border-[#365a94] bg-[#09142b]/70"
                     }`}
                   >
                     <div>
-                      <p className="text-xs uppercase tracking-[0.3em] text-[#a67047]">
+                      <p className="text-xs uppercase tracking-[0.3em] text-[#d1a741]">
                         {lead.id}
                       </p>
-                      <p className="mt-1 font-semibold text-[#14110f]">
+                      <p className="mt-1 font-semibold text-[#f2f6ff]">
                         {lead.buyer}
                       </p>
-                      <p className="mt-1 text-xs text-[#5a4a44]">
+                      <p className="mt-1 text-xs text-[#c6d6f7]">
                         {lead.parcel}
                       </p>
                       {lead.assignedAgentName && (
-                        <p className="mt-1 text-[10px] text-[#7a6a63]">
+                        <p className="mt-1 text-[10px] text-[#9eb6e1]">
                           Assigned to: {lead.assignedAgentName}
                         </p>
                       )}
                     </div>
                     <div className="text-right text-xs">
                       <p className="text-[#1f3d2d]">{lead.intent} intent</p>
-                      <p className="text-[#7a5f54]">{lead.time}</p>
+                      <p className="text-[#9eb6e1]">{lead.time}</p>
                     </div>
                   </button>
                 ))}
-                <div className="rounded-2xl border border-[#eadfce] bg-white px-4 py-4 text-xs">
+                <div className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-4 text-xs">
                   {selectedInquiryId ? (
                     (() => {
                       const inquiry = inquiries.find(
@@ -5091,30 +5091,30 @@ export default function VendorDashboard() {
                       if (!inquiry) return null;
                       return (
                         <div className="space-y-2">
-                          <p className="text-[10px] uppercase tracking-[0.3em] text-[#a67047]">
+                          <p className="text-[10px] uppercase tracking-[0.3em] text-[#d1a741]">
                             Inquiry details
                           </p>
-                          <p className="text-sm font-semibold text-[#14110f]">
+                          <p className="text-sm font-semibold text-[#f2f6ff]">
                             {inquiry.buyer} · {inquiry.parcel}
                           </p>
-                          <p className="text-[#5a4a44]">
+                          <p className="text-[#c6d6f7]">
                             Preferred contact: {inquiry.preferredContact}
                           </p>
-                          <p className="text-[#5a4a44]">
+                          <p className="text-[#c6d6f7]">
                             Phone: {inquiry.phone}
                           </p>
                           {inquiry.assignedAgentName && (
-                            <p className="text-[#5a4a44]">
+                            <p className="text-[#c6d6f7]">
                               Assigned to: {inquiry.assignedAgentName}
                             </p>
                           )}
                           {isPortalAdmin && (
-                            <p className="text-[#5a4a44]">
+                            <p className="text-[#c6d6f7]">
                               Responded by:{" "}
                               {inquiry.respondedByName || "Not responded yet"}
                             </p>
                           )}
-                          <p className="rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-3 py-3 text-[11px] text-[#5a4a44]">
+                          <p className="rounded-2xl border border-[#365a94] bg-[#0d1f3f] px-3 py-3 text-[11px] text-[#d6e5ff]">
                             {inquiry.message}
                           </p>
                           <button
@@ -5145,7 +5145,7 @@ export default function VendorDashboard() {
                               );
                               setSelectedInquiryId(null);
                             }}
-                            className="rounded-full bg-[#1f3d2d] px-3 py-2 text-[11px] font-semibold text-white"
+                            className="rounded-full bg-[#2454a0] px-3 py-2 text-[11px] font-semibold text-white"
                           >
                             Mark as responded
                           </button>
@@ -5153,7 +5153,7 @@ export default function VendorDashboard() {
                       );
                     })()
                   ) : (
-                    <p className="text-[#5a4a44]">
+                    <p className="text-[#c6d6f7]">
                       Select an inquiry to view details.
                     </p>
                   )}
@@ -5172,7 +5172,7 @@ export default function VendorDashboard() {
                         leads: !current.leads,
                       }))
                     }
-                    className="rounded-full border border-[#eadfce] bg-white px-3 py-1 text-[11px] text-[#5a4a44]"
+                    className="rounded-full border border-[#365a94] bg-[#09142b]/70 px-3 py-1 text-[11px] text-[#d6e5ff]"
                   >
                     {searchVisible.leads ? "Hide search" : "Search"}
                   </button>
@@ -5187,12 +5187,12 @@ export default function VendorDashboard() {
                         }))
                       }
                       placeholder="Search leads..."
-                      className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-xs text-[#14110f] sm:w-64"
+                      className="w-full rounded-2xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-xs text-[#e8eefc] sm:w-64"
                     />
                   )}
                 </div>
-                <div className="rounded-2xl border border-[#eadfce] bg-white px-4 py-3 text-xs text-[#5a4a44]">
-                  <p className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                <div className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-3 text-xs text-[#c6d6f7]">
+                  <p className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
                     SLA automation
                   </p>
                   <p className="mt-2">
@@ -5208,12 +5208,12 @@ export default function VendorDashboard() {
                     {agentScorecards.map((card) => (
                       <div
                         key={card.agentId}
-                        className="rounded-2xl border border-[#eadfce] bg-white px-4 py-3 text-xs"
+                        className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-3 text-xs"
                       >
-                        <p className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                        <p className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
                           {card.agentName}
                         </p>
-                        <div className="mt-2 space-y-1 text-[#5a4a44]">
+                        <div className="mt-2 space-y-1 text-[#c6d6f7]">
                           <p>Win rate: {card.winRate}%</p>
                           <p>
                             Avg response:{" "}
@@ -5228,8 +5228,8 @@ export default function VendorDashboard() {
                     ))}
                   </div>
                 )}
-                <div className="rounded-2xl border border-[#eadfce] bg-white px-4 py-3 text-xs">
-                  <p className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                <div className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-3 text-xs">
+                  <p className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
                     Add manual lead
                   </p>
                   {manualLeadError && (
@@ -5241,26 +5241,26 @@ export default function VendorDashboard() {
                       value={manualLeadName}
                       onChange={(event) => setManualLeadName(event.target.value)}
                       placeholder="Lead name"
-                      className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                      className="rounded-2xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-sm text-[#e8eefc]"
                     />
                     <input
                       type="text"
                       value={manualLeadPhone}
                       onChange={(event) => setManualLeadPhone(event.target.value)}
                       placeholder="Phone number"
-                      className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                      className="rounded-2xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-sm text-[#e8eefc]"
                     />
                     <input
                       type="text"
                       value={manualLeadParcel}
                       onChange={(event) => setManualLeadParcel(event.target.value)}
                       placeholder="Parcel or interest"
-                      className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                      className="rounded-2xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-sm text-[#e8eefc]"
                     />
                     <select
                       value={manualLeadAgentId}
                       onChange={(event) => setManualLeadAgentId(event.target.value)}
-                      className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                      className="rounded-2xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-sm text-[#e8eefc]"
                     >
                       <option value="">Auto-assign by load</option>
                       {assignableAgents.map((agent) => (
@@ -5274,13 +5274,13 @@ export default function VendorDashboard() {
                     value={manualLeadMessage}
                     onChange={(event) => setManualLeadMessage(event.target.value)}
                     placeholder="Context notes..."
-                    className="mt-2 min-h-[72px] w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                    className="mt-2 min-h-[72px] w-full rounded-2xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-sm text-[#e8eefc]"
                   />
                   <button
                     type="button"
                     onClick={createManualLead}
                     disabled={manualLeadSaving}
-                    className="mt-3 rounded-full bg-[#1f3d2d] px-4 py-2 text-[11px] font-semibold text-white disabled:opacity-60"
+                    className="mt-3 rounded-full bg-[#d1a741] px-4 py-2 text-[11px] font-semibold text-[#091631] disabled:opacity-60"
                   >
                     {manualLeadSaving ? "Saving..." : "Create manual lead"}
                   </button>
@@ -5309,51 +5309,51 @@ export default function VendorDashboard() {
                           setSelectedLeadId(lead.id);
                         }
                       }}
-                      className="flex w-full flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-4 py-3 text-left transition hover:border-[#c9b8a6]"
+                      className="flex w-full flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-3 text-left transition hover:border-[#6f9df0]"
                     >
                       <div>
-                        <p className="text-xs uppercase tracking-[0.3em] text-[#a67047]">
+                        <p className="text-xs uppercase tracking-[0.3em] text-[#d1a741]">
                           {lead.id}
                         </p>
-                        <p className="mt-1 font-semibold text-[#14110f]">
+                        <p className="mt-1 font-semibold text-[#f2f6ff]">
                           {lead.buyer}
                         </p>
-                        <p className="mt-1 text-xs text-[#5a4a44]">
+                        <p className="mt-1 text-xs text-[#c6d6f7]">
                           {lead.parcel}
                         </p>
-                        <p className="mt-1 text-[10px] text-[#7a6a63]">
+                        <p className="mt-1 text-[10px] text-[#9eb6e1]">
                           {lead.phone}
                         </p>
                         {isPortalAdmin && lead.assignedAgentName && (
-                          <p className="mt-1 text-[10px] text-[#7a6a63]">
+                          <p className="mt-1 text-[10px] text-[#9eb6e1]">
                             Assigned to: {lead.assignedAgentName}
                           </p>
                         )}
                         {isPortalAdmin && (
-                          <p className="mt-1 text-[10px] text-[#7a6a63]">
+                          <p className="mt-1 text-[10px] text-[#9eb6e1]">
                             Responded by:{" "}
                             {lead.respondedByName || "Not recorded"}
                           </p>
                         )}
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="rounded-full border border-[#eadfce] bg-white px-3 py-1 text-[10px] text-[#7a5f54]">
+                        <span className="rounded-full border border-[#284675] bg-[#09142b]/70 px-3 py-1 text-[10px] text-[#9eb6e1]">
                           {(lead.status ?? "responded") === "successful"
                             ? "Successful"
                             : "Responded"}
                         </span>
-                        <span className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#5a4a44]">
+                        <span className="rounded-full border border-[#365a94] px-3 py-1 text-[10px] text-[#c6d6f7]">
                           Open
                         </span>
                       </div>
                       {!isPortalAdmin && (
-                        <div className="mt-2 w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-[11px] text-[#5a4a44]">
+                        <div className="mt-2 w-full rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-[11px] text-[#c6d6f7]">
                           {leadAiSuggestions[lead.id] ? (
                             <>
-                              <p className="text-[10px] uppercase tracking-[0.2em] text-[#a67047]">
+                              <p className="text-[10px] uppercase tracking-[0.2em] text-[#d1a741]">
                                 AI next step
                               </p>
-                              <p className="mt-1 text-[#14110f]">
+                              <p className="mt-1 text-[#f2f6ff]">
                                 {leadAiSuggestions[lead.id].nextSteps[0] || "Follow up with tailored message."}
                               </p>
                             </>
@@ -5364,7 +5364,7 @@ export default function VendorDashboard() {
                                 event.stopPropagation();
                                 generateLeadAiSuggestions(lead);
                               }}
-                              className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px]"
+                              className="rounded-full border border-[#365a94] px-3 py-1 text-[10px]"
                             >
                               {leadAiLoading[lead.id] ? "Generating..." : "AI next step"}
                             </button>
@@ -5387,7 +5387,7 @@ export default function VendorDashboard() {
                         visits: !current.visits,
                       }))
                     }
-                    className="rounded-full border border-[#eadfce] bg-white px-3 py-1 text-[11px] text-[#5a4a44]"
+                    className="rounded-full border border-[#365a94] bg-[#09142b]/70 px-3 py-1 text-[11px] text-[#d6e5ff]"
                   >
                     {searchVisible.visits ? "Hide search" : "Search"}
                   </button>
@@ -5402,12 +5402,12 @@ export default function VendorDashboard() {
                         }))
                       }
                       placeholder="Search visit requests..."
-                      className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-xs text-[#14110f] sm:w-72"
+                      className="w-full rounded-2xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-xs text-[#e8eefc] sm:w-72"
                     />
                   )}
                 </div>
                 {visitRequests.length === 0 ? (
-                  <p className="rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-4 py-3 text-xs text-[#5a4a44]">
+                  <p className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-3 text-xs text-[#c6d6f7]">
                     No site visit requests yet.
                   </p>
                 ) : (
@@ -5422,49 +5422,49 @@ export default function VendorDashboard() {
                     .map((visit) => (
                       <div
                         key={visit.id}
-                        className="rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-4 py-3"
+                        className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-3"
                       >
                         <div className="flex flex-wrap items-start justify-between gap-2">
                           <div>
-                            <p className="text-xs uppercase tracking-[0.3em] text-[#a67047]">
+                            <p className="text-xs uppercase tracking-[0.3em] text-[#d1a741]">
                               {visit.id}
                             </p>
-                            <p className="mt-1 font-semibold text-[#14110f]">
+                            <p className="mt-1 font-semibold text-[#f2f6ff]">
                               {visit.plotLabel}
                             </p>
-                            <p className="mt-1 text-xs text-[#5a4a44]">
+                            <p className="mt-1 text-xs text-[#c6d6f7]">
                               Requested by: {visit.requestedByName}
                             </p>
-                            <p className="mt-1 text-[10px] text-[#7a6a63]">
+                            <p className="mt-1 text-[10px] text-[#9eb6e1]">
                               Phone: {visit.requestedByPhone || "N/A"}
                             </p>
-                            <p className="mt-1 text-[10px] text-[#7a6a63]">
+                            <p className="mt-1 text-[10px] text-[#9eb6e1]">
                               Preferred time: {visit.preferredVisitAt || "N/A"}
                             </p>
                             {visit.note ? (
-                              <p className="mt-1 text-[10px] text-[#7a6a63]">
+                              <p className="mt-1 text-[10px] text-[#9eb6e1]">
                                 Note: {visit.note}
                               </p>
                             ) : null}
-                            <p className="mt-1 text-[10px] text-[#7a6a63]">
+                            <p className="mt-1 text-[10px] text-[#9eb6e1]">
                               Requested at: {visit.createdAtLabel}
                             </p>
                             {visit.status === "visited" && (
-                              <p className="mt-1 text-[10px] text-[#7a6a63]">
+                              <p className="mt-1 text-[10px] text-[#9eb6e1]">
                                 Visited by: {visit.visitedByName || "Member"}
                                 {visit.visitedAtLabel ? ` on ${visit.visitedAtLabel}` : ""}
                               </p>
                             )}
                           </div>
                           <div className="flex items-center gap-2">
-                            <span className="rounded-full border border-[#eadfce] bg-white px-3 py-1 text-[10px] text-[#7a5f54]">
+                            <span className="rounded-full border border-[#284675] bg-[#09142b]/70 px-3 py-1 text-[10px] text-[#9eb6e1]">
                               {visit.status === "visited" ? "Visited" : "Requested"}
                             </span>
                             {visit.status !== "visited" && (
                               <button
                                 type="button"
                                 onClick={() => markVisitAsVisited(visit.id)}
-                                className="rounded-full bg-[#1f3d2d] px-3 py-1 text-[10px] font-semibold text-white"
+                                className="rounded-full bg-[#2454a0] px-3 py-1 text-[10px] font-semibold text-white"
                               >
                                 Mark as visited
                               </button>
@@ -5488,7 +5488,7 @@ export default function VendorDashboard() {
                         members: !current.members,
                       }))
                     }
-                    className="rounded-full border border-[#eadfce] bg-white px-3 py-1 text-[11px] text-[#5a4a44]"
+                    className="rounded-full border border-[#284675] bg-[#09142b]/70 px-3 py-1 text-[11px] text-[#c6d6f7]"
                   >
                     {searchVisible.members ? "Hide search" : "Search"}
                   </button>
@@ -5503,13 +5503,13 @@ export default function VendorDashboard() {
                         }))
                       }
                       placeholder="Search members..."
-                      className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-xs text-[#14110f] sm:w-64"
+                      className="w-full rounded-2xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-xs text-[#e8eefc] sm:w-64"
                     />
                   )}
                 </div>
 
-                <div className="rounded-2xl border border-[#eadfce] bg-white px-4 py-4">
-                  <p className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                <div className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-4">
+                  <p className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
                     Add member
                   </p>
                   {memberError && (
@@ -5523,14 +5523,14 @@ export default function VendorDashboard() {
                       value={memberEmail}
                       onChange={(event) => setMemberEmail(event.target.value)}
                       placeholder="Member email"
-                      className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                      className="w-full rounded-2xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-sm text-[#e8eefc]"
                     />
                     <select
                       value={memberRole}
                       onChange={(event) =>
                         setMemberRole(event.target.value as MemberRole)
                       }
-                      className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                      className="w-full rounded-2xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-sm text-[#e8eefc]"
                     >
                       <option value="admin">Admin</option>
                       <option value="agent">Agent</option>
@@ -5540,12 +5540,12 @@ export default function VendorDashboard() {
                     type="button"
                     onClick={addMemberByEmail}
                     disabled={memberSaving || !canManageMembers}
-                    className="mt-3 rounded-full bg-[#1f3d2d] px-4 py-2 text-xs font-semibold text-white disabled:opacity-60"
+                    className="mt-3 rounded-full bg-[#d1a741] px-4 py-2 text-xs font-semibold text-[#091631] disabled:opacity-60"
                   >
                     {memberSaving ? "Adding..." : "Add member"}
                   </button>
                   {!canManageMembers && (
-                    <p className="mt-2 text-[10px] text-[#8a7a70]">
+                    <p className="mt-2 text-[10px] text-[#9eb6e1]">
                       Access denied. Contact admin for addition.
                     </p>
                   )}
@@ -5563,23 +5563,23 @@ export default function VendorDashboard() {
                     .map((member) => (
                       <div
                         key={member.id}
-                        className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-4 py-3 text-xs"
+                        className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-3 text-xs"
                       >
                         <div>
-                          <p className="text-[10px] uppercase tracking-[0.3em] text-[#a67047]">
+                          <p className="text-[10px] uppercase tracking-[0.3em] text-[#d1a741]">
                             {member.role}
                           </p>
-                          <p className="mt-1 text-sm font-semibold text-[#14110f]">
+                          <p className="mt-1 text-sm font-semibold text-[#f2f6ff]">
                             {member.name}
                           </p>
-                          <p className="mt-1 text-[11px] text-[#5a4a44]">
+                          <p className="mt-1 text-[11px] text-[#c6d6f7]">
                             {member.email || "Email not set"}
                           </p>
                         </div>
                         <div className="flex flex-wrap items-center gap-2">
                           {editingMemberId === member.id ? (
                             <div className="space-y-2">
-                              <div className="flex flex-wrap items-center gap-2 text-[10px] text-[#5a4a44]">
+                              <div className="flex flex-wrap items-center gap-2 text-[10px] text-[#c6d6f7]">
                                 <label className="flex items-center gap-2">
                                   <span>Role</span>
                                   <select
@@ -5589,7 +5589,7 @@ export default function VendorDashboard() {
                                         event.target.value as MemberRole
                                       )
                                     }
-                                    className="rounded-full border border-[#eadfce] bg-white px-2 py-1 text-[10px] text-[#5a4a44]"
+                                    className="rounded-full border border-[#284675] bg-[#09142b]/70 px-2 py-1 text-[10px] text-[#c6d6f7]"
                                   >
                                     <option value="admin">Admin</option>
                                     <option value="agent">Agent</option>
@@ -5601,14 +5601,14 @@ export default function VendorDashboard() {
                                   type="button"
                                   onClick={saveMemberPermissions}
                                   disabled={memberUpdating}
-                                  className="rounded-full bg-[#1f3d2d] px-3 py-1 text-[10px] font-semibold text-white disabled:opacity-60"
+                                  className="rounded-full bg-[#2454a0] px-3 py-1 text-[10px] font-semibold text-white disabled:opacity-60"
                                 >
                                   {memberUpdating ? "Saving..." : "Save"}
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => setEditingMemberId(null)}
-                                  className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#5a4a44]"
+                                  className="rounded-full border border-[#365a94] px-3 py-1 text-[10px] text-[#c6d6f7]"
                                 >
                                   Cancel
                                 </button>
@@ -5616,35 +5616,35 @@ export default function VendorDashboard() {
                             </div>
                           ) : (
                             <>
-                              <div className="flex flex-wrap gap-2 text-[10px] text-[#5a4a44]">
+                              <div className="flex flex-wrap gap-2 text-[10px] text-[#c6d6f7]">
                                 {member.role === "admin" ? (
-                                  <span className="rounded-full border border-[#eadfce] bg-white px-2 py-1">
+                                  <span className="rounded-full border border-[#284675] bg-[#09142b]/70 px-2 py-1">
                                     Full access
                                   </span>
                                 ) : (
                                   <>
                                     {member.permissions.create_listings && (
-                                      <span className="rounded-full border border-[#eadfce] bg-white px-2 py-1">
+                                      <span className="rounded-full border border-[#284675] bg-[#09142b]/70 px-2 py-1">
                                         Listings
                                       </span>
                                     )}
                                     {member.permissions.add_sales && (
-                                      <span className="rounded-full border border-[#eadfce] bg-white px-2 py-1">
+                                      <span className="rounded-full border border-[#284675] bg-[#09142b]/70 px-2 py-1">
                                         Sales
                                       </span>
                                     )}
                                     {member.permissions.view_inquiries && (
-                                      <span className="rounded-full border border-[#eadfce] bg-white px-2 py-1">
+                                      <span className="rounded-full border border-[#284675] bg-[#09142b]/70 px-2 py-1">
                                         Inquiries
                                       </span>
                                     )}
                                     {member.permissions.view_leads && (
-                                      <span className="rounded-full border border-[#eadfce] bg-white px-2 py-1">
+                                      <span className="rounded-full border border-[#284675] bg-[#09142b]/70 px-2 py-1">
                                         Leads
                                       </span>
                                     )}
                                     {member.permissions.manage_members && (
-                                      <span className="rounded-full border border-[#eadfce] bg-white px-2 py-1">
+                                      <span className="rounded-full border border-[#284675] bg-[#09142b]/70 px-2 py-1">
                                         Members
                                       </span>
                                     )}
@@ -5656,14 +5656,14 @@ export default function VendorDashboard() {
                                   <button
                                     type="button"
                                     onClick={() => startEditMember(member)}
-                                    className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#5a4a44] hover:border-[#c9b8a6]"
+                                    className="rounded-full border border-[#365a94] px-3 py-1 text-[10px] text-[#c6d6f7] hover:border-[#c9b8a6]"
                                   >
                                     Edit
                                   </button>
                                   <button
                                     type="button"
                                     onClick={() => removeMember(member.id)}
-                                    className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#7a5f54] hover:border-[#c9b8a6]"
+                                    className="rounded-full border border-[#365a94] px-3 py-1 text-[10px] text-[#9eb6e1] hover:border-[#c9b8a6]"
                                   >
                                     Remove
                                   </button>
@@ -5689,7 +5689,7 @@ export default function VendorDashboard() {
                         pending: !current.pending,
                       }))
                     }
-                    className="rounded-full border border-[#eadfce] bg-white px-3 py-1 text-[11px] text-[#5a4a44]"
+                    className="rounded-full border border-[#284675] bg-[#09142b]/70 px-3 py-1 text-[11px] text-[#c6d6f7]"
                   >
                     {searchVisible.pending ? "Hide search" : "Search"}
                   </button>
@@ -5704,7 +5704,7 @@ export default function VendorDashboard() {
                         }))
                       }
                       placeholder="Search pending sales..."
-                      className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-xs text-[#14110f] sm:w-64"
+                      className="w-full rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-xs text-[#f2f6ff] sm:w-64"
                     />
                   )}
                 </div>
@@ -5719,21 +5719,21 @@ export default function VendorDashboard() {
                   .map((sale) => (
                   <div
                     key={sale.id}
-                    className="rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-4 py-3"
+                    className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-3"
                   >
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
-                        <p className="text-xs uppercase tracking-[0.3em] text-[#a67047]">
+                        <p className="text-xs uppercase tracking-[0.3em] text-[#d1a741]">
                           {sale.id}
                         </p>
-                        <p className="mt-1 font-semibold text-[#14110f]">
+                        <p className="mt-1 font-semibold text-[#f2f6ff]">
                           {sale.parcelName}
                         </p>
-                        <p className="mt-1 text-xs text-[#5a4a44]">
+                        <p className="mt-1 text-xs text-[#c6d6f7]">
                           Buyer: {sale.buyer}
                         </p>
                         {isPortalAdmin && (
-                          <p className="mt-1 text-[10px] text-[#7a6a63]">
+                          <p className="mt-1 text-[10px] text-[#9eb6e1]">
                             Sold by: {sale.createdByAgentName || "Unknown"}
                           </p>
                         )}
@@ -5742,10 +5742,10 @@ export default function VendorDashboard() {
                         <p className="text-[#1f3d2d]">
                           Ksh {sale.salePrice.toLocaleString()}
                         </p>
-                        <p className="text-[#7a5f54]">{sale.soldOn}</p>
+                        <p className="text-[#9eb6e1]">{sale.soldOn}</p>
                       </div>
                     </div>
-                    <div className="mt-3 grid gap-2 text-[11px] text-[#5a4a44] sm:grid-cols-3">
+                    <div className="mt-3 grid gap-2 text-[11px] text-[#c6d6f7] sm:grid-cols-3">
                       <span>Net: Ksh {sale.netToVendor.toLocaleString()}</span>
                       <span>Paid: Ksh {sale.totalPaid.toLocaleString()}</span>
                       <span>
@@ -5753,14 +5753,14 @@ export default function VendorDashboard() {
                       </span>
                     </div>
                     {(sale.fullyPaid || sale.remainingBalance <= 0) && (
-                      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-[11px] text-[#1f3d2d]">
+                      <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-[11px] text-[#1f3d2d]">
                         <span>
                           Payments fully received. Close the sale to finalize.
                         </span>
                         <button
                           type="button"
                           onClick={() => closePendingSale(sale)}
-                          className="rounded-full bg-[#1f3d2d] px-3 py-1 text-[10px] font-semibold text-white"
+                          className="rounded-full bg-[#2454a0] px-3 py-1 text-[10px] font-semibold text-white"
                           disabled={!canAddSales}
                         >
                           Close sale
@@ -5768,7 +5768,7 @@ export default function VendorDashboard() {
                       </div>
                     )}
                     <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-[11px]">
-                      <span className="text-[#7a5f54]">
+                      <span className="text-[#9eb6e1]">
                         Remaining balance: Ksh{" "}
                         {sale.remainingBalance.toLocaleString()}
                       </span>
@@ -5779,27 +5779,27 @@ export default function VendorDashboard() {
                             current === sale.id ? null : sale.id
                           )
                         }
-                        className="rounded-full border border-[#1f3d2d]/30 bg-white px-3 py-1 text-[#1f3d2d]"
+                        className="rounded-full border border-[#365a94] bg-[#09142b]/70 px-3 py-1 text-[#1f3d2d]"
                       >
                         {expandedPendingId === sale.id
                           ? "Hide installments"
                           : "Update installments"}
                       </button>
                     </div>
-                    <div className="mt-3 rounded-2xl border border-[#eadfce] bg-white px-3 py-3 text-[11px] text-[#5a4a44]">
+                    <div className="mt-3 rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-3 text-[11px] text-[#c6d6f7]">
                       <div className="flex items-center justify-between">
-                        <p className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                        <p className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
                           Installments recorded
                         </p>
                         <div className="flex items-center gap-2">
-                          <span className="rounded-full border border-[#eadfce] px-2 py-1 text-[9px] text-[#5a4a44]">
+                          <span className="rounded-full border border-[#365a94] px-2 py-1 text-[9px] text-[#c6d6f7]">
                             {sale.installments.length}
                           </span>
                           {installmentsOpenId === sale.id ? (
                             <button
                               type="button"
                               onClick={() => setInstallmentsOpenId(null)}
-                              className="rounded-full border border-[#eadfce] px-2 py-1 text-[9px] text-[#5a4a44]"
+                              className="rounded-full border border-[#365a94] px-2 py-1 text-[9px] text-[#c6d6f7]"
                             >
                               Close
                             </button>
@@ -5807,7 +5807,7 @@ export default function VendorDashboard() {
                             <button
                               type="button"
                               onClick={() => setInstallmentsOpenId(sale.id)}
-                              className="rounded-full border border-[#eadfce] px-2 py-1 text-[9px] text-[#5a4a44]"
+                              className="rounded-full border border-[#365a94] px-2 py-1 text-[9px] text-[#c6d6f7]"
                             >
                               View
                             </button>
@@ -5817,7 +5817,7 @@ export default function VendorDashboard() {
                       {installmentsOpenId === sale.id && (
                         <div className="mt-3 overflow-x-auto">
                         <table className="w-full text-left text-[11px]">
-                          <thead className="text-[10px] uppercase tracking-[0.2em] text-[#a67047]">
+                          <thead className="text-[10px] uppercase tracking-[0.2em] text-[#d1a741]">
                             <tr>
                               <th className="py-2 pr-3">Amount</th>
                               <th className="py-2 pr-3">Date</th>
@@ -5842,13 +5842,13 @@ export default function VendorDashboard() {
                                       href={installment.proofUrl}
                                       target="_blank"
                                       rel="noreferrer"
-                                      className="inline-flex rounded-full border border-[#eadfce] px-2 py-1 text-[10px] text-[#1f3d2d]"
+                                      className="inline-flex rounded-full border border-[#365a94] px-2 py-1 text-[10px] text-[#1f3d2d]"
                                       title={installment.proofName || "View proof"}
                                     >
                                       View
                                     </a>
                                   ) : (
-                                    <span className="text-[#8a7a70]">—</span>
+                                    <span className="text-[#9eb6e1]">—</span>
                                   )}
                                 </td>
                               </tr>
@@ -5859,8 +5859,8 @@ export default function VendorDashboard() {
                       )}
                     </div>
                     {expandedPendingId === sale.id && (
-                      <div className="mt-3 rounded-2xl border border-[#eadfce] bg-white px-3 py-3 text-[11px] text-[#5a4a44]">
-                        <p className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                      <div className="mt-3 rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-3 text-[11px] text-[#c6d6f7]">
+                        <p className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
                           Add / update installments
                         </p>
                         <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(0,1fr)_140px_140px]">
@@ -5880,7 +5880,7 @@ export default function VendorDashboard() {
                               }))
                             }
                             placeholder="Ksh 0"
-                            className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                            className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-sm text-[#f2f6ff]"
                           />
                           <input
                             type="date"
@@ -5897,7 +5897,7 @@ export default function VendorDashboard() {
                                 },
                               }))
                             }
-                            className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                            className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-sm text-[#f2f6ff]"
                           />
                           <select
                             value={installmentDrafts[sale.id]?.method ?? "Mobile money"}
@@ -5915,7 +5915,7 @@ export default function VendorDashboard() {
                                 },
                               }))
                             }
-                            className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                            className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-sm text-[#f2f6ff]"
                           >
                             <option value="Mobile money">Mobile money</option>
                             <option value="Bank transfer">Bank transfer</option>
@@ -5938,14 +5938,14 @@ export default function VendorDashboard() {
                                 },
                               }))
                             }
-                            className="text-xs text-[#5a4a44] file:mr-3 file:rounded-full file:border-0 file:bg-[#c77d4b] file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white"
+                            className="text-xs text-[#c6d6f7] file:mr-3 file:rounded-full file:border-0 file:bg-[#c77d4b] file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white"
                           />
                           {installmentDrafts[sale.id]?.proofFile ? (
-                            <span className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#6b3e1e]">
+                            <span className="rounded-full border border-[#365a94] px-3 py-1 text-[10px] text-[#d6e5ff]">
                               {installmentDrafts[sale.id]?.proofFile?.name}
                             </span>
                           ) : (
-                            <span className="text-[10px] text-[#7a6a63]">
+                            <span className="text-[10px] text-[#9eb6e1]">
                               Optional payment proof
                             </span>
                           )}
@@ -5953,7 +5953,7 @@ export default function VendorDashboard() {
                         <button
                           type="button"
                           onClick={() => submitPendingInstallment(sale.id)}
-                          className="mt-3 rounded-full bg-[#1f3d2d] px-3 py-2 text-[11px] font-semibold text-white"
+                          className="mt-3 rounded-full bg-[#2454a0] px-3 py-2 text-[11px] font-semibold text-white"
                           disabled={installmentDrafts[sale.id]?.saving || !canAddSales}
                         >
                           {installmentDrafts[sale.id]?.saving
@@ -5978,7 +5978,7 @@ export default function VendorDashboard() {
                         sales: !current.sales,
                       }))
                     }
-                    className="rounded-full border border-[#eadfce] bg-white px-3 py-1 text-[11px] text-[#5a4a44]"
+                    className="rounded-full border border-[#284675] bg-[#09142b]/70 px-3 py-1 text-[11px] text-[#c6d6f7]"
                   >
                     {searchVisible.sales ? "Hide search" : "Search"}
                   </button>
@@ -5993,7 +5993,7 @@ export default function VendorDashboard() {
                         }))
                       }
                       placeholder="Search sales..."
-                      className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-xs text-[#14110f] sm:w-64"
+                      className="w-full rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-xs text-[#f2f6ff] sm:w-64"
                     />
                   )}
                 </div>
@@ -6008,21 +6008,21 @@ export default function VendorDashboard() {
                   .map((sale) => (
                   <div
                     key={sale.id}
-                    className="rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-4 py-3"
+                    className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-3"
                   >
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div>
-                        <p className="text-xs uppercase tracking-[0.3em] text-[#a67047]">
+                        <p className="text-xs uppercase tracking-[0.3em] text-[#d1a741]">
                           {sale.id}
                         </p>
-                        <p className="mt-1 font-semibold text-[#14110f]">
+                        <p className="mt-1 font-semibold text-[#f2f6ff]">
                           {sale.parcelName}
                         </p>
-                        <p className="mt-1 text-xs text-[#5a4a44]">
+                        <p className="mt-1 text-xs text-[#c6d6f7]">
                           Buyer: {sale.buyer}
                         </p>
                         {isPortalAdmin && (
-                          <p className="mt-1 text-[10px] text-[#7a6a63]">
+                          <p className="mt-1 text-[10px] text-[#9eb6e1]">
                             Sold by: {sale.createdByAgentName || "Unknown"}
                           </p>
                         )}
@@ -6031,20 +6031,20 @@ export default function VendorDashboard() {
                         <p className="text-[#1f3d2d]">
                           Ksh {sale.salePrice.toLocaleString()}
                         </p>
-                        <p className="text-[#7a5f54]">{sale.soldOn}</p>
+                        <p className="text-[#9eb6e1]">{sale.soldOn}</p>
                       </div>
                     </div>
-                    <div className="mt-3 flex flex-wrap items-center justify-between text-[11px] text-[#5a4a44]">
+                    <div className="mt-3 flex flex-wrap items-center justify-between text-[11px] text-[#c6d6f7]">
                       <span>Fee: Ksh {sale.processingFee.toLocaleString()}</span>
                       <span>Net: Ksh {sale.netToVendor.toLocaleString()}</span>
                     </div>
-                    <div className="mt-3 rounded-2xl border border-[#eadfce] bg-white px-3 py-3 text-[11px] text-[#5a4a44]">
+                    <div className="mt-3 rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-3 text-[11px] text-[#c6d6f7]">
                       <div className="flex items-center justify-between gap-2">
                         <div>
-                          <p className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                          <p className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
                             Documents
                           </p>
-                          <p className="mt-1 text-[10px] text-[#7a6a63]">
+                          <p className="mt-1 text-[10px] text-[#9eb6e1]">
                             View all uploaded sale documents.
                           </p>
                         </div>
@@ -6055,7 +6055,7 @@ export default function VendorDashboard() {
                               current === sale.id ? null : sale.id
                             )
                           }
-                          className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#5a4a44]"
+                          className="rounded-full border border-[#365a94] px-3 py-1 text-[10px] text-[#c6d6f7]"
                         >
                           {documentsOpenId === sale.id ? "Hide" : "View"}
                         </button>
@@ -6066,30 +6066,30 @@ export default function VendorDashboard() {
                             sale.attachments.map((doc, idx) => (
                               <div
                                 key={`${sale.id}-doc-${idx}`}
-                                className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-[#eadfce] px-3 py-2 text-[10px]"
+                                className="flex flex-wrap items-center justify-between gap-2 rounded-2xl border border-[#365a94] px-3 py-2 text-[10px]"
                               >
                                 <div>
-                                  <p className="font-semibold text-[#14110f]">
+                                  <p className="font-semibold text-[#f2f6ff]">
                                     {doc.label || "Document"}
                                   </p>
-                                  <p className="text-[#7a6a63]">{doc.name}</p>
+                                  <p className="text-[#9eb6e1]">{doc.name}</p>
                                 </div>
                                 {doc.url ? (
                                   <a
                                     href={doc.url}
                                     target="_blank"
                                     rel="noreferrer"
-                                    className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#1f3d2d]"
+                                    className="rounded-full border border-[#365a94] px-3 py-1 text-[10px] text-[#1f3d2d]"
                                   >
                                     View
                                   </a>
                                 ) : (
-                                  <span className="text-[#8a7a70]">—</span>
+                                  <span className="text-[#9eb6e1]">—</span>
                                 )}
                               </div>
                             ))
                           ) : (
-                            <p className="text-[10px] text-[#7a6a63]">
+                            <p className="text-[10px] text-[#9eb6e1]">
                               No documents uploaded for this sale.
                             </p>
                           )}
@@ -6106,7 +6106,7 @@ export default function VendorDashboard() {
         </section>
       </main>
 
-      <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-[#eadfce] bg-white/90 px-4 py-3 text-xs backdrop-blur lg:hidden">
+      <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-[#284675] bg-[#08152f]/92 px-4 py-3 text-xs backdrop-blur lg:hidden">
         <div className="relative">
           <div className="overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             <div className="flex min-w-max items-center gap-2 pr-14">
@@ -6138,8 +6138,8 @@ export default function VendorDashboard() {
                   }
                   className={`shrink-0 rounded-full px-3 py-2 text-xs transition ${
                     activeTab === tab.id
-                      ? "bg-[#1f3d2d] text-white"
-                      : "border border-[#eadfce] bg-white text-[#5a4a44]"
+                      ? "bg-[#2454a0] text-white"
+                      : "border border-[#365a94] bg-[#09142b]/70 text-[#d6e5ff]"
                   } ${canAccessTab(tab.id) ? "" : "opacity-60"}`}
                 >
                   {tab.label}
@@ -6147,7 +6147,7 @@ export default function VendorDashboard() {
               ))}
             </div>
           </div>
-          <div className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 rounded-full border border-[#eadfce] bg-white/95 px-2 py-1 text-[10px] text-[#7a5f54] shadow-sm animate-pulse">
+          <div className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 rounded-full border border-[#365a94] bg-[#09142b]/95 px-2 py-1 text-[10px] text-[#9eb6e1] shadow-sm animate-pulse">
             Scroll &gt;
           </div>
         </div>
@@ -6155,20 +6155,20 @@ export default function VendorDashboard() {
 
       {saleModalOpen && saleDraft && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6">
-          <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-3xl border border-[#eadfce] bg-[#fbf8f3] p-6 shadow-[0_30px_70px_-40px_rgba(20,17,15,0.6)]">
+          <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-3xl border border-[#284675] bg-[#0a1834]/95 p-6 shadow-[0_30px_70px_-40px_rgba(0,0,0,0.9)]">
             <div className="flex items-start justify-between">
               <div>
-                <p className="text-xs uppercase tracking-[0.35em] text-[#a67047]">
+                <p className="text-xs uppercase tracking-[0.35em] text-[#d1a741]">
                   Record sale
                 </p>
-                <p className="mt-2 font-serif text-xl text-[#14110f]">
+                <p className="mt-2 font-serif text-xl text-[#f2f6ff]">
                   {saleDraft.parcelName}
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setSaleModalOpen(false)}
-                className="rounded-full border border-[#eadfce] px-3 py-1 text-xs text-[#5a4a44]"
+                className="rounded-full border border-[#365a94] px-3 py-1 text-xs text-[#c6d6f7]"
               >
                 Close
               </button>
@@ -6177,7 +6177,7 @@ export default function VendorDashboard() {
             <div className="mt-5 space-y-4 text-xs">
               <div className="grid gap-3 md:grid-cols-2">
                 <div>
-                  <label className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                  <label className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
                     Buyer name
                   </label>
                   <input
@@ -6185,11 +6185,11 @@ export default function VendorDashboard() {
                     value={buyerNameInput}
                     onChange={(event) => setBuyerNameInput(event.target.value)}
                     placeholder="Buyer or company name"
-                    className="mt-2 w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                    className="mt-2 w-full rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-sm text-[#f2f6ff]"
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                  <label className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
                     Selling price
                   </label>
                   <input
@@ -6199,12 +6199,12 @@ export default function VendorDashboard() {
                       setSalePriceInput(formatKshInput(event.target.value))
                     }
                     placeholder="e.g. Ksh 48,000"
-                    className="mt-2 w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                    className="mt-2 w-full rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-sm text-[#f2f6ff]"
                   />
                 </div>
               </div>
               <div>
-                <label className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                <label className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
                   Sale type
                 </label>
                 <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
@@ -6220,8 +6220,8 @@ export default function VendorDashboard() {
                       }
                       className={`rounded-full px-3 py-1 text-[11px] transition ${
                         saleType === option.id
-                          ? "bg-[#1f3d2d] text-white"
-                          : "border border-[#eadfce] bg-white text-[#5a4a44]"
+                          ? "bg-[#2454a0] text-white"
+                          : "border border-[#284675] bg-[#09142b]/70 text-[#c6d6f7]"
                       }`}
                     >
                       {option.label}
@@ -6230,7 +6230,7 @@ export default function VendorDashboard() {
                 </div>
               </div>
               <div>
-                <label className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                <label className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
                   Charges & expenses
                 </label>
                 {charges.length > 0 && (
@@ -6253,7 +6253,7 @@ export default function VendorDashboard() {
                             )
                           }
                           placeholder="Charge name"
-                          className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                          className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-sm text-[#f2f6ff]"
                         />
                         <input
                           type="text"
@@ -6271,7 +6271,7 @@ export default function VendorDashboard() {
                             )
                           }
                           placeholder="Ksh 0"
-                          className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                          className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-sm text-[#f2f6ff]"
                         />
                         <select
                           value={charge.kind}
@@ -6289,7 +6289,7 @@ export default function VendorDashboard() {
                               )
                             )
                           }
-                          className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                          className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-sm text-[#f2f6ff]"
                         >
                           <option value="charge">Charge</option>
                           <option value="expense">Expense</option>
@@ -6301,7 +6301,7 @@ export default function VendorDashboard() {
                               current.filter((item) => item.id !== charge.id)
                             )
                           }
-                          className="rounded-full border border-[#eadfce] px-3 py-2 text-xs text-[#5a4a44]"
+                          className="rounded-full border border-[#365a94] px-3 py-2 text-xs text-[#c6d6f7]"
                         >
                           Remove
                         </button>
@@ -6317,13 +6317,13 @@ export default function VendorDashboard() {
                       { id: Date.now(), label: "", amount: "", kind: "charge" },
                     ])
                   }
-                  className="mt-3 rounded-full border border-[#eadfce] px-3 py-2 text-xs text-[#5a4a44]"
+                  className="mt-3 rounded-full border border-[#365a94] px-3 py-2 text-xs text-[#c6d6f7]"
                 >
                   Add item
                 </button>
               </div>
-              <div className="rounded-2xl border border-[#eadfce] bg-white px-4 py-4">
-                <p className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+              <div className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-4">
+                <p className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
                   Attachment
                 </p>
                 <div className="mt-3 space-y-2">
@@ -6345,7 +6345,7 @@ export default function VendorDashboard() {
                           )
                         }
                         placeholder="File label (e.g. Contract)"
-                        className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                        className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-sm text-[#f2f6ff]"
                       />
                       <input
                         type="file"
@@ -6364,7 +6364,7 @@ export default function VendorDashboard() {
                             )
                           );
                         }}
-                        className="text-xs text-[#5a4a44] file:mr-3 file:rounded-full file:border-0 file:bg-[#c77d4b] file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white"
+                        className="text-xs text-[#c6d6f7] file:mr-3 file:rounded-full file:border-0 file:bg-[#c77d4b] file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white"
                       />
                       <button
                         type="button"
@@ -6373,7 +6373,7 @@ export default function VendorDashboard() {
                             current.filter((item) => item.id !== attachment.id)
                           )
                         }
-                        className="rounded-full border border-[#eadfce] px-3 py-2 text-xs text-[#5a4a44]"
+                        className="rounded-full border border-[#365a94] px-3 py-2 text-xs text-[#c6d6f7]"
                       >
                         Remove
                       </button>
@@ -6381,7 +6381,7 @@ export default function VendorDashboard() {
                   ))}
                 </div>
                 {saleAttachments.length === 0 ? (
-                  <p className="mt-2 text-[10px] text-[#7a6a63]">
+                  <p className="mt-2 text-[10px] text-[#9eb6e1]">
                     Optional files for this sale record.
                   </p>
                 ) : (
@@ -6391,7 +6391,7 @@ export default function VendorDashboard() {
                       .map((item) => (
                         <span
                           key={item.id}
-                          className="inline-flex rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#6b3e1e]"
+                          className="inline-flex rounded-full border border-[#365a94] px-3 py-1 text-[10px] text-[#d6e5ff]"
                         >
                           {item.name}
                         </span>
@@ -6406,14 +6406,14 @@ export default function VendorDashboard() {
                       { id: Date.now(), label: "", file: null, name: "" },
                     ])
                   }
-                  className="mt-3 rounded-full border border-[#eadfce] px-3 py-2 text-xs text-[#5a4a44]"
+                  className="mt-3 rounded-full border border-[#365a94] px-3 py-2 text-xs text-[#c6d6f7]"
                 >
                   Add attachment
                 </button>
               </div>
               {saleType === "installments" && (
                 <div>
-                  <label className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                  <label className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
                     Installments
                   </label>
                   {installments.length > 0 && (
@@ -6439,7 +6439,7 @@ export default function VendorDashboard() {
                               )
                             }
                             placeholder="Ksh 0"
-                            className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                            className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-sm text-[#f2f6ff]"
                           />
                           <input
                             type="date"
@@ -6453,7 +6453,7 @@ export default function VendorDashboard() {
                                 )
                               )
                             }
-                            className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                            className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-sm text-[#f2f6ff]"
                           />
                           <select
                             value={installment.method}
@@ -6472,7 +6472,7 @@ export default function VendorDashboard() {
                                 )
                               )
                             }
-                            className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                            className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-sm text-[#f2f6ff]"
                           >
                             <option value="Mobile money">Mobile money</option>
                             <option value="Bank transfer">Bank transfer</option>
@@ -6485,7 +6485,7 @@ export default function VendorDashboard() {
                                 current.filter((item) => item.id !== installment.id)
                               )
                             }
-                            className="rounded-full border border-[#eadfce] px-3 py-2 text-xs text-[#5a4a44]"
+                            className="rounded-full border border-[#365a94] px-3 py-2 text-xs text-[#c6d6f7]"
                           >
                             Remove
                           </button>
@@ -6508,14 +6508,14 @@ export default function VendorDashboard() {
                                     )
                                   );
                                 }}
-                                className="text-xs text-[#5a4a44] file:mr-3 file:rounded-full file:border-0 file:bg-[#c77d4b] file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white"
+                                className="text-xs text-[#c6d6f7] file:mr-3 file:rounded-full file:border-0 file:bg-[#c77d4b] file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white"
                               />
                               {installment.proofName ? (
-                                <span className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#6b3e1e]">
+                                <span className="rounded-full border border-[#365a94] px-3 py-1 text-[10px] text-[#d6e5ff]">
                                   {installment.proofName}
                                 </span>
                               ) : (
-                                <span className="text-[10px] text-[#7a6a63]">
+                                <span className="text-[10px] text-[#9eb6e1]">
                                   Optional payment proof
                                 </span>
                               )}
@@ -6539,24 +6539,24 @@ export default function VendorDashboard() {
                         },
                       ])
                     }
-                    className="mt-3 rounded-full border border-[#eadfce] px-3 py-2 text-xs text-[#5a4a44]"
+                    className="mt-3 rounded-full border border-[#365a94] px-3 py-2 text-xs text-[#c6d6f7]"
                   >
                     Add installment
                   </button>
                   <div className="mt-3">
-                    <label className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                    <label className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
                       Next payment date
                     </label>
                     <input
                       type="date"
                       value={nextPaymentDate}
                       onChange={(event) => setNextPaymentDate(event.target.value)}
-                      className="mt-2 w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                      className="mt-2 w-full rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-sm text-[#f2f6ff]"
                     />
                   </div>
                 </div>
               )}
-              <div className="rounded-2xl border border-[#eadfce] bg-white px-4 py-3 text-[11px] text-[#5a4a44]">
+              <div className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-3 text-[11px] text-[#c6d6f7]">
                 <p>
                   Net to vendor: Ksh{" "}
                   {Math.max(
@@ -6619,14 +6619,14 @@ export default function VendorDashboard() {
               <button
                 type="button"
                 onClick={() => setSaleModalOpen(false)}
-                className="rounded-full border border-[#eadfce] px-4 py-2 text-xs text-[#5a4a44]"
+                className="rounded-full border border-[#365a94] px-4 py-2 text-xs text-[#c6d6f7]"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={confirmSale}
-                className="rounded-full bg-[#1f3d2d] px-4 py-2 text-xs font-semibold text-white"
+                className="rounded-full bg-[#2454a0] px-4 py-2 text-xs font-semibold text-white"
               >
                 Record sale
               </button>
@@ -6637,17 +6637,17 @@ export default function VendorDashboard() {
 
       {selectedLeadId && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6">
-          <div className="w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-3xl border border-[#eadfce] bg-[#fbf8f3] p-6 shadow-[0_30px_70px_-40px_rgba(20,17,15,0.6)]">
+          <div className="w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-3xl border border-[#284675] bg-[#09142b]/70 p-6 shadow-[0_30px_70px_-40px_rgba(20,17,15,0.6)]">
             {(() => {
               const lead = inquiries.find((item) => item.id === selectedLeadId);
               if (!lead) {
                 return (
-                  <div className="space-y-3 text-sm text-[#5a4a44]">
+                  <div className="space-y-3 text-sm text-[#c6d6f7]">
                     <p>Lead not found.</p>
                     <button
                       type="button"
                       onClick={() => setSelectedLeadId(null)}
-                      className="rounded-full border border-[#eadfce] px-3 py-1 text-xs"
+                      className="rounded-full border border-[#365a94] px-3 py-1 text-xs"
                     >
                       Close
                     </button>
@@ -6658,23 +6658,23 @@ export default function VendorDashboard() {
                 <>
                   <div className="flex items-start justify-between">
                     <div>
-                      <p className="text-xs uppercase tracking-[0.35em] text-[#a67047]">
+                      <p className="text-xs uppercase tracking-[0.35em] text-[#d1a741]">
                         Lead progress
                       </p>
-                      <p className="mt-2 font-serif text-xl text-[#14110f]">
+                      <p className="mt-2 font-serif text-xl text-[#f2f6ff]">
                         {lead.buyer} - {lead.parcel}
                       </p>
                     </div>
                     <button
                       type="button"
                       onClick={() => setSelectedLeadId(null)}
-                      className="rounded-full border border-[#eadfce] px-3 py-1 text-xs text-[#5a4a44]"
+                      className="rounded-full border border-[#365a94] px-3 py-1 text-xs text-[#c6d6f7]"
                     >
                       Close
                     </button>
                   </div>
 
-                  <div className="mt-4 space-y-2 text-xs text-[#5a4a44]">
+                  <div className="mt-4 space-y-2 text-xs text-[#c6d6f7]">
                     <p>Phone: {lead.phone}</p>
                     <p>Assigned to: {lead.assignedAgentName || "Unassigned"}</p>
                     <p>
@@ -6686,38 +6686,38 @@ export default function VendorDashboard() {
                     )}
                   </div>
 
-                  <div className="mt-4 rounded-2xl border border-[#eadfce] bg-white px-4 py-3">
-                    <div className="rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-3 py-2 text-[11px]">
+                  <div className="mt-4 rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-3">
+                    <div className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-[11px]">
                       <div className="flex items-center justify-between gap-2">
-                        <p className="text-[10px] uppercase tracking-[0.2em] text-[#a67047]">
+                        <p className="text-[10px] uppercase tracking-[0.2em] text-[#d1a741]">
                           AI suggestions
                         </p>
                         <button
                           type="button"
                           onClick={() => generateLeadAiSuggestions(lead)}
-                          className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px]"
+                          className="rounded-full border border-[#365a94] px-3 py-1 text-[10px]"
                         >
                           {leadAiLoading[lead.id] ? "Generating..." : "Refresh"}
                         </button>
                       </div>
                       {leadAiSuggestions[lead.id] ? (
-                        <div className="mt-2 space-y-2 text-[#5a4a44]">
+                        <div className="mt-2 space-y-2 text-[#c6d6f7]">
                           <p>
                             Next step:{" "}
-                            <span className="text-[#14110f]">
+                            <span className="text-[#f2f6ff]">
                               {leadAiSuggestions[lead.id].nextSteps[0] || "Follow up with personalized update."}
                             </span>
                           </p>
                           {leadAiSuggestions[lead.id].messageSuggestions.length > 0 && (
                             <div>
-                              <p className="text-[10px] uppercase tracking-[0.2em] text-[#a67047]">
+                              <p className="text-[10px] uppercase tracking-[0.2em] text-[#d1a741]">
                                 Suggested texts
                               </p>
                               <div className="mt-1 space-y-1">
                                 {leadAiSuggestions[lead.id].messageSuggestions
                                   .slice(0, 2)
                                   .map((text, index) => (
-                                    <p key={`${lead.id}-msg-${index}`} className="rounded-xl border border-[#eadfce] bg-white px-2 py-1">
+                                    <p key={`${lead.id}-msg-${index}`} className="rounded-xl border border-[#284675] bg-[#09142b]/70 px-2 py-1">
                                       {text}
                                     </p>
                                   ))}
@@ -6726,12 +6726,12 @@ export default function VendorDashboard() {
                           )}
                         </div>
                       ) : (
-                        <p className="mt-2 text-[#7a6a63]">
+                        <p className="mt-2 text-[#9eb6e1]">
                           Generate lead-specific next steps and text suggestions.
                         </p>
                       )}
                     </div>
-                    <p className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                    <p className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
                       Conversation progress
                     </p>
                     <div className="mt-3 space-y-2">
@@ -6739,10 +6739,10 @@ export default function VendorDashboard() {
                         (lead.progressLogs ?? []).map((entry) => (
                           <div
                             key={entry.id}
-                            className="rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-3 py-2 text-[11px]"
+                            className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-[11px]"
                           >
-                            <p className="text-[#14110f]">{entry.note}</p>
-                            <p className="mt-1 text-[10px] text-[#7a6a63]">
+                            <p className="text-[#f2f6ff]">{entry.note}</p>
+                            <p className="mt-1 text-[10px] text-[#9eb6e1]">
                               {entry.byName} - {entry.at}
                               {entry.kind ? ` - ${entry.kind.replace("_", " ")}` : ""}
                               {entry.channel ? ` - ${entry.channel}` : ""}
@@ -6753,7 +6753,7 @@ export default function VendorDashboard() {
                           </div>
                         ))
                       ) : (
-                        <p className="text-[11px] text-[#7a6a63]">
+                        <p className="text-[11px] text-[#9eb6e1]">
                           No progress updates yet.
                         </p>
                       )}
@@ -6762,7 +6762,7 @@ export default function VendorDashboard() {
                       value={leadProgressNote}
                       onChange={(event) => setLeadProgressNote(event.target.value)}
                       placeholder="Example: Visited site with customer; requested payment plan."
-                      className="mt-3 min-h-[90px] w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                      className="mt-3 min-h-[90px] w-full rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-sm text-[#f2f6ff]"
                     />
                     <div className="mt-3 grid gap-2 md:grid-cols-2">
                       <select
@@ -6777,7 +6777,7 @@ export default function VendorDashboard() {
                               | "follow_up"
                           )
                         }
-                        className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                        className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-sm text-[#f2f6ff]"
                       >
                         <option value="follow_up">Follow-up</option>
                         <option value="call">Call</option>
@@ -6792,7 +6792,7 @@ export default function VendorDashboard() {
                             event.target.value as "Call" | "WhatsApp" | "SMS" | "Email"
                           )
                         }
-                        className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                        className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-sm text-[#f2f6ff]"
                       >
                         <option value="WhatsApp">WhatsApp</option>
                         <option value="SMS">SMS</option>
@@ -6803,21 +6803,21 @@ export default function VendorDashboard() {
                         type="datetime-local"
                         value={leadNextFollowUpAt}
                         onChange={(event) => setLeadNextFollowUpAt(event.target.value)}
-                        className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                        className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-sm text-[#f2f6ff]"
                       />
                       <input
                         type="datetime-local"
                         value={leadReminderAt}
                         onChange={(event) => setLeadReminderAt(event.target.value)}
-                        className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                        className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-sm text-[#f2f6ff]"
                       />
                     </div>
                     {(lead.reminders ?? []).length > 0 && (
-                      <div className="mt-3 rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-3 py-2 text-[11px]">
-                        <p className="text-[10px] uppercase tracking-[0.2em] text-[#a67047]">
+                      <div className="mt-3 rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-[11px]">
+                        <p className="text-[10px] uppercase tracking-[0.2em] text-[#d1a741]">
                           Scheduled reminders
                         </p>
-                        <div className="mt-2 space-y-1 text-[#5a4a44]">
+                        <div className="mt-2 space-y-1 text-[#c6d6f7]">
                           {(lead.reminders ?? []).map((reminder) => (
                             <p key={reminder.id}>
                               {reminder.channel} - {new Date(reminder.scheduledAt).toLocaleString()} -{" "}
@@ -6832,7 +6832,7 @@ export default function VendorDashboard() {
                         type="button"
                         onClick={logLeadProgress}
                         disabled={leadProgressSaving}
-                        className="rounded-full bg-[#1f3d2d] px-4 py-2 text-[11px] font-semibold text-white disabled:opacity-60"
+                        className="rounded-full bg-[#2454a0] px-4 py-2 text-[11px] font-semibold text-white disabled:opacity-60"
                       >
                         {leadProgressSaving ? "Saving..." : "Save progress"}
                       </button>
@@ -6843,7 +6843,7 @@ export default function VendorDashboard() {
                           leadStatusSaving ||
                           (lead.status ?? "responded") === "successful"
                         }
-                        className="rounded-full border border-[#1f3d2d] bg-white px-4 py-2 text-[11px] font-semibold text-[#1f3d2d] disabled:opacity-60"
+                        className="rounded-full border border-[#1f3d2d] bg-[#0d1f3f] px-4 py-2 text-[11px] font-semibold text-[#1f3d2d] disabled:opacity-60"
                       >
                         {leadStatusSaving
                           ? "Updating..."
@@ -6862,23 +6862,23 @@ export default function VendorDashboard() {
 
       {newListingOpen && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6">
-          <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-3xl border border-[#eadfce] bg-[#fbf8f3] p-6 shadow-[0_30px_70px_-40px_rgba(20,17,15,0.6)]">
+          <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-3xl border border-[#284675] bg-[#09142b]/70 p-6 shadow-[0_30px_70px_-40px_rgba(20,17,15,0.6)]">
             <div className="flex items-start justify-between">
               <div>
-                <p className="text-xs uppercase tracking-[0.35em] text-[#a67047]">
+                <p className="text-xs uppercase tracking-[0.35em] text-[#d1a741]">
                   New listing
                 </p>
-                <p className="mt-2 font-serif text-2xl text-[#14110f]">
+                <p className="mt-2 font-serif text-2xl text-[#f2f6ff]">
                   Capture a parcel
                 </p>
-                <p className="mt-2 text-xs text-[#5a4a44]">
+                <p className="mt-2 text-xs text-[#c6d6f7]">
                   Step {listingStep} of 3
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setNewListingOpen(false)}
-                className="rounded-full border border-[#eadfce] px-3 py-1 text-xs text-[#5a4a44]"
+                className="rounded-full border border-[#365a94] px-3 py-1 text-xs text-[#c6d6f7]"
               >
                 Close
               </button>
@@ -6887,7 +6887,7 @@ export default function VendorDashboard() {
             {listingStep === 1 && (
               <div className="mt-6 grid gap-4 md:grid-cols-2">
                 <div>
-                  <label className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                  <label className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
                     Parcel name
                   </label>
                   <input
@@ -6898,11 +6898,11 @@ export default function VendorDashboard() {
                       setListingStepError(null);
                     }}
                     placeholder="Plot name"
-                    className="mt-2 w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                    className="mt-2 w-full rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-sm text-[#f2f6ff]"
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                  <label className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
                     Parcel size
                   </label>
                   <input
@@ -6913,11 +6913,11 @@ export default function VendorDashboard() {
                       setListingStepError(null);
                     }}
                     placeholder="e.g. 2.6 acres"
-                    className="mt-2 w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                    className="mt-2 w-full rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-sm text-[#f2f6ff]"
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                  <label className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
                     Price
                   </label>
                   <input
@@ -6928,11 +6928,11 @@ export default function VendorDashboard() {
                       setListingStepError(null);
                     }}
                     placeholder="e.g. Ksh 48k"
-                    className="mt-2 w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                    className="mt-2 w-full rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-sm text-[#f2f6ff]"
                   />
                 </div>
                 <div>
-                  <label className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                  <label className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
                     Number of parcels
                   </label>
                   <input
@@ -6944,16 +6944,16 @@ export default function VendorDashboard() {
                       setListingStepError(null);
                     }}
                     placeholder="e.g. 4"
-                    className="mt-2 w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                    className="mt-2 w-full rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-sm text-[#f2f6ff]"
                   />
                 </div>
                 {listingStepError && (
-                  <div className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-[11px] text-[#b3261e] md:col-span-2">
+                  <div className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-[11px] text-[#b3261e] md:col-span-2">
                     {listingStepError}
                   </div>
                 )}
                 <div className="md:col-span-2">
-                  <label className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                  <label className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
                     Amenities
                   </label>
                   <div className="mt-2 flex flex-wrap gap-2 text-xs">
@@ -6980,7 +6980,7 @@ export default function VendorDashboard() {
                           className={`rounded-full px-3 py-1 text-xs transition ${
                             isActive
                               ? 'bg-[#c77d4b] text-white'
-                              : 'border border-[#eadfce] bg-white text-[#6b3e1e]'
+                              : 'border border-[#284675] bg-[#09142b]/70 text-[#d6e5ff]'
                           }`}
                         >
                           {amenity}
@@ -6994,11 +6994,11 @@ export default function VendorDashboard() {
 
             {listingStep === 2 && (
               <div className="mt-6 space-y-5 text-xs text-[#3a2f2a]">
-                <div className="rounded-2xl border border-[#eadfce] bg-white px-4 py-4">
-                  <p className="text-[10px] uppercase tracking-[0.3em] text-[#a67047]">
+                <div className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-4">
+                  <p className="text-[10px] uppercase tracking-[0.3em] text-[#d1a741]">
                     Mutation form
                   </p>
-                  <p className="mt-2 text-xs text-[#5a4a44]">
+                  <p className="mt-2 text-xs text-[#c6d6f7]">
                     Upload an image or PDF of the mutation form. PDFs are
                     uploaded as-is, while images are enhanced before upload.
                   </p>
@@ -7086,10 +7086,10 @@ export default function VendorDashboard() {
                         setMutationFormUploading(false);
                       }
                     }}
-                    className="mt-3 w-full text-xs text-[#5a4a44] file:mr-3 file:rounded-full file:border-0 file:bg-[#c77d4b] file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white"
+                    className="mt-3 w-full text-xs text-[#c6d6f7] file:mr-3 file:rounded-full file:border-0 file:bg-[#c77d4b] file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white"
                   />
                   {mutationFormUrl && (
-                    <p className="mt-2 text-[11px] text-[#6b3e1e]">
+                    <p className="mt-2 text-[11px] text-[#d6e5ff]">
                       Uploaded: {mutationFormName || "Mutation form"}.
                     </p>
                   )}
@@ -7099,28 +7099,28 @@ export default function VendorDashboard() {
                     </p>
                   )}
                   {mutationFormUploading && (
-                    <p className="mt-2 text-[11px] text-[#6b3e1e]">
+                    <p className="mt-2 text-[11px] text-[#d6e5ff]">
                       Uploading mutation form...
                     </p>
                   )}
                 </div>
 
-                <div className="rounded-2xl border border-[#eadfce] bg-white px-4 py-4">
-                  <p className="text-[10px] uppercase tracking-[0.3em] text-[#a67047]">
+                <div className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-4">
+                  <p className="text-[10px] uppercase tracking-[0.3em] text-[#d1a741]">
                     Plot location
                   </p>
-                  <p className="mt-2 text-xs text-[#5a4a44]">
+                  <p className="mt-2 text-xs text-[#c6d6f7]">
                     Pick the exact plot location on the satellite map.
                   </p>
                   <div className="mt-3 flex flex-wrap items-center gap-3">
                     <button
                       type="button"
                       onClick={() => setAnchorMapOpen(true)}
-                      className="rounded-full bg-[#1f3d2d] px-4 py-2 text-xs font-semibold text-white"
+                      className="rounded-full bg-[#2454a0] px-4 py-2 text-xs font-semibold text-white"
                     >
                       Open satellite map
                     </button>
-                    <span className="text-[11px] text-[#5a4a44]">
+                    <span className="text-[11px] text-[#c6d6f7]">
                       {anchorTrueCoord
                         ? `${anchorTrueCoord.lat.toFixed(6)}, ${anchorTrueCoord.lng.toFixed(6)}`
                         : "No location selected yet."}
@@ -7129,7 +7129,7 @@ export default function VendorDashboard() {
                 </div>
 
                 {listingStepError && (
-                  <div className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-[11px] text-[#b3261e]">
+                  <div className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-[11px] text-[#b3261e]">
                     {listingStepError}
                   </div>
                 )}
@@ -7137,11 +7137,11 @@ export default function VendorDashboard() {
             )}
             {listingStep === 3 && (
               <div className="mt-6 space-y-4 text-xs text-[#3a2f2a]">
-                <div className="rounded-2xl border border-[#eadfce] bg-white px-4 py-4">
-                  <p className="text-[10px] uppercase tracking-[0.3em] text-[#a67047]">
+                <div className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-4">
+                  <p className="text-[10px] uppercase tracking-[0.3em] text-[#d1a741]">
                     Surrounding images
                   </p>
-                  <p className="mt-2 text-xs text-[#5a4a44]">
+                  <p className="mt-2 text-xs text-[#c6d6f7]">
                     Upload images showing the surroundings of the plot.
                   </p>
                   <input
@@ -7183,10 +7183,10 @@ export default function VendorDashboard() {
                         setSurroundingUploading(false);
                       }
                     }}
-                    className="mt-3 w-full text-xs text-[#5a4a44] file:mr-3 file:rounded-full file:border-0 file:bg-[#c77d4b] file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white"
+                    className="mt-3 w-full text-xs text-[#c6d6f7] file:mr-3 file:rounded-full file:border-0 file:bg-[#c77d4b] file:px-3 file:py-2 file:text-xs file:font-semibold file:text-white"
                   />
                   {surroundingUploading && (
-                    <p className="mt-2 text-[11px] text-[#6b3e1e]">
+                    <p className="mt-2 text-[11px] text-[#d6e5ff]">
                       Uploading surrounding images...
                     </p>
                   )}
@@ -7195,9 +7195,9 @@ export default function VendorDashboard() {
                       {surroundingImages.map((image) => (
                         <div
                           key={image.id}
-                          className="flex items-center justify-between rounded-xl border border-[#eadfce] px-3 py-2"
+                          className="flex items-center justify-between rounded-xl border border-[#365a94] px-3 py-2"
                         >
-                          <span className="text-[11px] text-[#5a4a44]">
+                          <span className="text-[11px] text-[#c6d6f7]">
                             {image.name}
                           </span>
                           <button
@@ -7207,7 +7207,7 @@ export default function VendorDashboard() {
                                 current.filter((item) => item.id !== image.id)
                               )
                             }
-                            className="rounded-full border border-[#eadfce] px-2 py-1 text-[10px] text-[#5a4a44]"
+                            className="rounded-full border border-[#365a94] px-2 py-1 text-[10px] text-[#c6d6f7]"
                           >
                             Remove
                           </button>
@@ -7218,7 +7218,7 @@ export default function VendorDashboard() {
                 </div>
 
                 {listingStepError && (
-                  <div className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-[11px] text-[#b3261e]">
+                  <div className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-[11px] text-[#b3261e]">
                     {listingStepError}
                   </div>
                 )}
@@ -7234,13 +7234,13 @@ export default function VendorDashboard() {
                         step === 2 ? 1 : (step - 1) as 1 | 2 | 3
                       )
                     }
-                    className="rounded-full border border-[#eadfce] px-4 py-2 text-xs text-[#5a4a44]"
+                    className="rounded-full border border-[#365a94] px-4 py-2 text-xs text-[#c6d6f7]"
                   >
                     Back
                   </button>
                 )}
               </div>
-              <div className="flex flex-col items-end gap-2 text-[10px] text-[#6b3e1e]">
+              <div className="flex flex-col items-end gap-2 text-[10px] text-[#d6e5ff]">
                 {listingStep < 3 ? (
                   <>
                     <span>Saved as draft. You can finish later.</span>
@@ -7284,30 +7284,30 @@ export default function VendorDashboard() {
 
       {anchorMapOpen && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6">
-          <div className="w-full max-w-4xl max-h-[90vh] overflow-hidden rounded-3xl border border-[#eadfce] bg-[#fbf8f3] p-6 shadow-[0_30px_70px_-40px_rgba(20,17,15,0.6)]">
+          <div className="w-full max-w-4xl max-h-[90vh] overflow-hidden rounded-3xl border border-[#284675] bg-[#09142b]/70 p-6 shadow-[0_30px_70px_-40px_rgba(20,17,15,0.6)]">
             <div className="flex items-start justify-between">
               <div>
-                <p className="text-xs uppercase tracking-[0.35em] text-[#a67047]">
+                <p className="text-xs uppercase tracking-[0.35em] text-[#d1a741]">
                   Plot location
                 </p>
-                <p className="mt-2 text-lg font-semibold text-[#14110f]">
+                <p className="mt-2 text-lg font-semibold text-[#f2f6ff]">
                   Pick the plot point
                 </p>
-                <p className="mt-1 text-xs text-[#5a4a44]">
+                <p className="mt-1 text-xs text-[#c6d6f7]">
                   Tap the exact position of the plot on the satellite map.
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setAnchorMapOpen(false)}
-                className="rounded-full border border-[#eadfce] px-3 py-1 text-xs text-[#5a4a44]"
+                className="rounded-full border border-[#365a94] px-3 py-1 text-xs text-[#c6d6f7]"
               >
                 Close
               </button>
             </div>
-            <div className="mt-4 overflow-hidden rounded-3xl border border-[#eadfce] bg-white">
+            <div className="mt-4 overflow-hidden rounded-3xl border border-[#284675] bg-[#09142b]/70">
               <div className="relative h-[420px] w-full">
-                <div className="absolute right-4 top-4 z-10 w-[220px] rounded-2xl border border-[#eadfce] bg-white/95 p-2 text-[11px] shadow-sm backdrop-blur">
+                <div className="absolute right-4 top-4 z-10 w-[220px] rounded-2xl border border-[#284675] bg-[#09142b]/70/95 p-2 text-[11px] shadow-sm backdrop-blur">
                   <div className="flex items-center gap-2">
                     <input
                       value={anchorSearchQuery}
@@ -7318,13 +7318,13 @@ export default function VendorDashboard() {
                         }
                       }}
                       placeholder="Search places"
-                      className="w-full rounded-full border border-[#eadfce] bg-white px-3 py-2 text-[11px] text-[#14110f]"
+                      className="w-full rounded-full border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-[11px] text-[#f2f6ff]"
                     />
                     <button
                       type="button"
                       onClick={runAnchorSearch}
                       disabled={!anchorSearchQuery.trim() || anchorSearchLoading}
-                      className="rounded-full bg-[#1f3d2d] px-3 py-2 text-[10px] font-semibold text-white disabled:opacity-60"
+                      className="rounded-full bg-[#2454a0] px-3 py-2 text-[10px] font-semibold text-white disabled:opacity-60"
                     >
                       {anchorSearchLoading ? "..." : "Go"}
                     </button>
@@ -7335,7 +7335,7 @@ export default function VendorDashboard() {
                     </p>
                   )}
                   {anchorSearchResults.length > 0 && (
-                    <div className="mt-2 max-h-40 overflow-auto rounded-xl border border-[#eadfce] bg-white">
+                    <div className="mt-2 max-h-40 overflow-auto rounded-xl border border-[#284675] bg-[#09142b]/70">
                       {anchorSearchResults.map((result) => (
                         <button
                           key={result.id}
@@ -7348,21 +7348,21 @@ export default function VendorDashboard() {
                             });
                             anchorMapInstanceRef.current?.setZoom(16);
                           }}
-                          className="block w-full border-b border-[#f1e6d7] px-3 py-2 text-left text-[10px] text-[#5a4a44] hover:bg-[#fbf8f3]"
+                          className="block w-full border-b border-[#f1e6d7] px-3 py-2 text-left text-[10px] text-[#c6d6f7] hover:bg-[#09142b]/70"
                         >
                           {result.place_name}
                         </button>
                       ))}
                     </div>
                   )}
-                  <p className="mt-2 text-[10px] text-[#7a5f54]">
+                  <p className="mt-2 text-[10px] text-[#9eb6e1]">
                     Search uses Google Maps geocoding.
                   </p>
                 </div>
                 <div ref={anchorMapRef} className="h-full w-full" />
               </div>
             </div>
-            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs text-[#5a4a44]">
+            <div className="mt-4 flex flex-wrap items-center justify-between gap-2 text-xs text-[#c6d6f7]">
               <span>
                 Selected location:{" "}
                 {anchorTrueCoord
@@ -7374,7 +7374,7 @@ export default function VendorDashboard() {
               <button
                 type="button"
                 onClick={() => setAnchorMapOpen(false)}
-                className="rounded-full bg-[#1f3d2d] px-4 py-2 text-xs font-semibold text-white"
+                className="rounded-full bg-[#2454a0] px-4 py-2 text-xs font-semibold text-white"
               >
                 Use this location
               </button>
@@ -7385,30 +7385,30 @@ export default function VendorDashboard() {
 
       {mapPreviewOpen && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6">
-          <div className="w-full max-w-4xl max-h-[90vh] overflow-hidden rounded-3xl border border-[#eadfce] bg-[#fbf8f3] p-6 shadow-[0_30px_70px_-40px_rgba(20,17,15,0.6)]">
+          <div className="w-full max-w-4xl max-h-[90vh] overflow-hidden rounded-3xl border border-[#284675] bg-[#09142b]/70 p-6 shadow-[0_30px_70px_-40px_rgba(20,17,15,0.6)]">
             <div className="flex items-start justify-between">
               <div>
-                <p className="text-xs uppercase tracking-[0.35em] text-[#a67047]">
+                <p className="text-xs uppercase tracking-[0.35em] text-[#d1a741]">
                   Parcel map preview
                 </p>
-                <p className="mt-2 text-lg font-semibold text-[#14110f]">
+                <p className="mt-2 text-lg font-semibold text-[#f2f6ff]">
                   Adjust parcel positions
                 </p>
-                <p className="mt-1 text-xs text-[#5a4a44]">
+                <p className="mt-1 text-xs text-[#c6d6f7]">
                   Drag any parcel boundary to reposition it on the map.
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setMapPreviewOpen(false)}
-                className="rounded-full border border-[#eadfce] px-3 py-1 text-xs text-[#5a4a44]"
+                className="rounded-full border border-[#365a94] px-3 py-1 text-xs text-[#c6d6f7]"
               >
                 Close
               </button>
             </div>
-            <div className="mt-4 overflow-hidden rounded-3xl border border-[#eadfce] bg-white">
+            <div className="mt-4 overflow-hidden rounded-3xl border border-[#284675] bg-[#09142b]/70">
               <div className="relative h-[420px] w-full">
-                <div className="absolute right-4 top-4 z-10 w-[220px] rounded-2xl border border-[#eadfce] bg-white/95 p-2 text-[11px] shadow-sm backdrop-blur">
+                <div className="absolute right-4 top-4 z-10 w-[220px] rounded-2xl border border-[#284675] bg-[#09142b]/70/95 p-2 text-[11px] shadow-sm backdrop-blur">
                   <div className="flex items-center gap-2">
                     <input
                       value={mapSearchQuery}
@@ -7419,13 +7419,13 @@ export default function VendorDashboard() {
                         }
                       }}
                       placeholder="Search places"
-                      className="w-full rounded-full border border-[#eadfce] bg-white px-3 py-2 text-[11px] text-[#14110f]"
+                      className="w-full rounded-full border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-[11px] text-[#f2f6ff]"
                     />
                     <button
                       type="button"
                       onClick={runMapSearch}
                       disabled={!mapSearchQuery.trim() || mapSearchLoading}
-                      className="rounded-full bg-[#1f3d2d] px-3 py-2 text-[10px] font-semibold text-white disabled:opacity-60"
+                      className="rounded-full bg-[#2454a0] px-3 py-2 text-[10px] font-semibold text-white disabled:opacity-60"
                     >
                       {mapSearchLoading ? "..." : "Go"}
                     </button>
@@ -7436,7 +7436,7 @@ export default function VendorDashboard() {
                     </p>
                   )}
                   {mapSearchResults.length > 0 && (
-                    <div className="mt-2 max-h-40 overflow-auto rounded-xl border border-[#eadfce] bg-white">
+                    <div className="mt-2 max-h-40 overflow-auto rounded-xl border border-[#284675] bg-[#09142b]/70">
                       {mapSearchResults.map((result) => (
                         <button
                           key={result.id}
@@ -7449,26 +7449,26 @@ export default function VendorDashboard() {
                             });
                             mapPreviewInstanceRef.current?.setZoom(16);
                           }}
-                          className="block w-full border-b border-[#f1e6d7] px-3 py-2 text-left text-[10px] text-[#5a4a44] hover:bg-[#fbf8f3]"
+                          className="block w-full border-b border-[#f1e6d7] px-3 py-2 text-left text-[10px] text-[#c6d6f7] hover:bg-[#09142b]/70"
                         >
                           {result.place_name}
                         </button>
                       ))}
                     </div>
                   )}
-                  <p className="mt-2 text-[10px] text-[#7a5f54]">
+                  <p className="mt-2 text-[10px] text-[#9eb6e1]">
                     Search uses Google Maps geocoding.
                   </p>
                 </div>
                 <div ref={mapPreviewRef} className="h-full w-full" />
               </div>
             </div>
-            <div className="mt-4 flex items-center justify-between text-xs text-[#5a4a44]">
+            <div className="mt-4 flex items-center justify-between text-xs text-[#c6d6f7]">
               <span>Tip: Click and drag a parcel to nudge its position.</span>
               <button
                 type="button"
                 onClick={() => setMapPreviewOpen(false)}
-                className="rounded-full bg-[#1f3d2d] px-4 py-2 text-xs font-semibold text-white"
+                className="rounded-full bg-[#2454a0] px-4 py-2 text-xs font-semibold text-white"
               >
                 Save positions
               </button>
@@ -7481,3 +7481,4 @@ export default function VendorDashboard() {
     loadingView
   );
 }
+

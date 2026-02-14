@@ -299,35 +299,35 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_#f9f1e6,_#f2ede4_55%,_#efe7d8)] text-[#14110f]">
+    <div className="min-h-screen bg-[radial-gradient(circle_at_12%_10%,_rgba(209,167,65,0.22),_transparent_28%),radial-gradient(circle_at_88%_12%,_rgba(74,160,255,0.2),_transparent_34%),linear-gradient(120deg,_#050b1a_0%,_#07122a_45%,_#091631_100%)] text-[#e8eefc]">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-6 sm:px-6">
         <div className="flex items-center gap-3">
           <div
-            className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-2xl bg-[#1f3d2d]"
+            className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-2xl bg-[#0d1f3f]"
             suppressHydrationWarning
           >
             {hydrated ? (
               <img src="/logo.png" alt="PlotTrust logo" className="h-8 w-8" />
             ) : (
-              <span className="text-lg font-semibold text-[#f4f1ea]">PT</span>
+              <span className="text-lg font-semibold text-[#f6f9ff]">PT</span>
             )}
           </div>
           <div>
-            <p className="text-sm uppercase tracking-[0.3em] text-[#1f3d2d]">
+            <p className="text-sm uppercase tracking-[0.3em] text-[#a9c7ff]">
               PlotTrust
             </p>
-            <p className="text-xs text-[#3a2f2a]">Ground-truth land listings</p>
+            <p className="text-xs text-[#c6d6f7]">Ground-truth land listings</p>
           </div>
         </div>
         <div className="hidden items-center gap-3 text-sm font-medium md:flex">
           <button
-            className="rounded-full border border-[#1f3d2d]/30 px-4 py-2 text-[#1f3d2d] transition hover:border-[#1f3d2d]"
+            className="rounded-full border border-[#4a78c7]/60 bg-[#09142b]/70 px-4 py-2 text-[#cfe1ff] transition hover:border-[#6f9df0]"
             onClick={() => setLoginOpen(true)}
           >
             Manage property
           </button>
           <button
-            className="rounded-full bg-[#1f3d2d] px-5 py-2 text-[#f7f3ea] transition hover:bg-[#173124]"
+            className="rounded-full bg-[#d1a741] px-5 py-2 text-[#091631] transition hover:bg-[#dfbc66]"
             onClick={() => setSignupOpen(true)}
           >
             Register
@@ -336,19 +336,19 @@ export default function Home() {
       </div>
       <div className="mx-auto grid max-w-6xl grid-cols-3 items-center gap-2 px-4 pb-4 sm:px-6 md:hidden">
         <button
-          className="w-full rounded-full border border-[#1f3d2d]/30 px-3 py-2 text-xs font-semibold text-[#1f3d2d] transition hover:border-[#1f3d2d]"
+          className="w-full rounded-full border border-[#4a78c7]/60 bg-[#09142b]/70 px-3 py-2 text-xs font-semibold text-[#cfe1ff] transition hover:border-[#6f9df0]"
           onClick={() => setFiltersOpen(true)}
         >
           Filters
         </button>
         <button
-          className="w-full rounded-full border border-[#1f3d2d]/30 px-3 py-2 text-xs font-semibold text-[#1f3d2d] transition hover:border-[#1f3d2d]"
+          className="w-full rounded-full border border-[#4a78c7]/60 bg-[#09142b]/70 px-3 py-2 text-xs font-semibold text-[#cfe1ff] transition hover:border-[#6f9df0]"
           onClick={() => setLoginOpen(true)}
         >
           Manage property
         </button>
         <button
-          className="w-full rounded-full bg-[#1f3d2d] px-3 py-2 text-xs font-semibold text-[#f7f3ea] transition hover:bg-[#173124]"
+          className="w-full rounded-full bg-[#d1a741] px-3 py-2 text-xs font-semibold text-[#091631] transition hover:bg-[#dfbc66]"
           onClick={() => setSignupOpen(true)}
         >
           Register
@@ -356,31 +356,31 @@ export default function Home() {
       </div>
 
       <main className="mx-auto grid max-w-7xl gap-8 px-4 pb-16 pt-4 sm:px-6 lg:grid-cols-[260px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)] lg:items-start">
-        <section className="order-2 hidden min-h-[720px] flex-col rounded-3xl bg-[#fbf8f3] p-5 shadow-[0_20px_60px_-40px_rgba(20,17,15,0.5)] lg:order-1 lg:flex">
-          <p className="text-xs uppercase tracking-[0.35em] text-[#c77d4b]">
+        <section className="order-2 hidden min-h-[720px] flex-col rounded-3xl border border-[#284675] bg-[#09142b]/82 p-5 shadow-[0_25px_70px_-45px_rgba(0,0,0,0.9)] backdrop-blur lg:order-1 lg:flex">
+          <p className="text-xs uppercase tracking-[0.35em] text-[#d1a741]">
             Live map
           </p>
-          <h1 className="mt-3 font-serif text-2xl leading-tight text-[#14110f]">
+          <h1 className="mt-3 font-serif text-2xl leading-tight text-[#f2f6ff]">
             Walk the land before you arrive.
           </h1>
-          <p className="mt-3 text-sm leading-6 text-[#3a2f2a]">
+          <p className="mt-3 text-sm leading-6 text-[#c6d6f7]">
             Every listing has a walked perimeter, a confidence score, and a
             visual path from the nearest landmark.
           </p>
           <div className="mt-4 flex flex-wrap gap-2 text-xs font-medium">
-            <button className="rounded-full bg-[#c77d4b] px-3 py-2 text-[#fef7ee] transition hover:bg-[#b86e3d]">
+            <button className="rounded-full bg-[#d1a741] px-3 py-2 text-[#091631] transition hover:bg-[#dfbc66]">
               Explore verified
             </button>
-            <button className="rounded-full border border-[#c77d4b]/30 px-3 py-2 text-[#6b3e1e] transition hover:border-[#c77d4b]">
+            <button className="rounded-full border border-[#4a78c7]/60 px-3 py-2 text-[#d6e5ff] transition hover:border-[#6f9df0]">
               Start a capture
             </button>
           </div>
 
-          <div className="mt-6 rounded-3xl border border-[#eadfce] bg-white p-4">
-            <p className="text-[10px] uppercase tracking-[0.35em] text-[#a67047]">
+          <div className="mt-6 rounded-3xl border border-[#284675] bg-[#0a1834]/85 p-4">
+            <p className="text-[10px] uppercase tracking-[0.35em] text-[#d1a741]">
               Filters
             </p>
-            <div className="mt-3 space-y-3 text-xs text-[#4b3b35]">
+            <div className="mt-3 space-y-3 text-xs text-[#c6d6f7]">
               <div>
                 <p className="text-[11px] font-semibold text-[#14110f]">
                   Vendor
@@ -658,24 +658,24 @@ export default function Home() {
         </section>
       </main>
 
-      <div className="border-t border-[#eadfce] px-6 py-6 text-xs text-[#5a4a44]" />
+      <div className="border-t border-[#284675] px-6 py-6 text-xs text-[#95add8]" />
 
       {signupOpen && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6">
-          <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-3xl border border-[#eadfce] bg-[#fbf8f3] p-6 shadow-[0_30px_70px_-40px_rgba(20,17,15,0.6)]">
+          <div className="w-full max-w-lg max-h-[90vh] overflow-y-auto rounded-3xl border border-[#284675] bg-[#0a1834]/95 p-6 shadow-[0_30px_70px_-40px_rgba(0,0,0,0.9)]">
             <div className="flex items-start justify-between">
               <div>
-                <p className="text-xs uppercase tracking-[0.35em] text-[#a67047]">
+                <p className="text-xs uppercase tracking-[0.35em] text-[#d1a741]">
                   Vendor signup
                 </p>
-                <p className="mt-2 font-serif text-xl text-[#14110f]">
+                <p className="mt-2 font-serif text-xl text-[#f2f6ff]">
                   Create a vendor account
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setSignupOpen(false)}
-                className="rounded-full border border-[#eadfce] px-3 py-1 text-xs text-[#5a4a44]"
+                className="rounded-full border border-[#4a78c7]/60 px-3 py-1 text-xs text-[#d6e5ff]"
               >
                 Close
               </button>
@@ -753,20 +753,20 @@ export default function Home() {
 
       {loginOpen && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6">
-          <div className="w-full max-w-sm max-h-[90vh] overflow-y-auto rounded-3xl border border-[#eadfce] bg-[#fbf8f3] p-6 shadow-[0_30px_70px_-40px_rgba(20,17,15,0.6)]">
+          <div className="w-full max-w-sm max-h-[90vh] overflow-y-auto rounded-3xl border border-[#284675] bg-[#0a1834]/95 p-6 shadow-[0_30px_70px_-40px_rgba(0,0,0,0.9)]">
             <div className="flex items-start justify-between">
               <div>
-                <p className="text-xs uppercase tracking-[0.35em] text-[#a67047]">
+                <p className="text-xs uppercase tracking-[0.35em] text-[#d1a741]">
                   Vendor login
                 </p>
-                <p className="mt-2 font-serif text-xl text-[#14110f]">
+                <p className="mt-2 font-serif text-xl text-[#f2f6ff]">
                   Manage property
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => setLoginOpen(false)}
-                className="rounded-full border border-[#eadfce] px-3 py-1 text-xs text-[#5a4a44]"
+                className="rounded-full border border-[#4a78c7]/60 px-3 py-1 text-xs text-[#d6e5ff]"
               >
                 Close
               </button>

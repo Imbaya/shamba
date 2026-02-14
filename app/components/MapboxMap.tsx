@@ -819,13 +819,13 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
   }, [is3D]);
 
   return (
-    <div className="relative h-[55vh] min-h-[360px] w-full overflow-hidden rounded-[20px] border border-[#eadfce] bg-[#e8dccb] shadow-[0_30px_70px_-45px_rgba(20,17,15,0.55)] sm:h-[65vh] sm:min-h-[520px] md:h-[720px] md:rounded-[32px]">
-      <div className="absolute left-3 top-3 z-10 flex flex-wrap gap-2 rounded-full bg-white/90 px-2 py-2 text-[10px] font-semibold text-[#1f3d2d] shadow-sm backdrop-blur sm:left-5 sm:top-5 sm:px-3 sm:py-2 sm:text-xs">
+    <div className="relative h-[55vh] min-h-[360px] w-full overflow-hidden rounded-[20px] border border-[#284675] bg-[#08152f] shadow-[0_35px_80px_-50px_rgba(0,0,0,0.9)] sm:h-[65vh] sm:min-h-[520px] md:h-[720px] md:rounded-[32px]">
+      <div className="absolute left-3 top-3 z-10 flex flex-wrap gap-2 rounded-full border border-[#284675] bg-[#08152f]/85 px-2 py-2 text-[10px] font-semibold text-[#d6e5ff] shadow-sm backdrop-blur sm:left-5 sm:top-5 sm:px-3 sm:py-2 sm:text-xs">
         <button
           type="button"
           onClick={() => setShowLandmarks((value) => !value)}
           className={`rounded-full px-3 py-1 transition ${
-            showLandmarks ? "bg-[#c77d4b] text-white" : "text-[#1f3d2d]"
+            showLandmarks ? "bg-[#d1a741] text-[#091631]" : "text-[#d6e5ff]"
           }`}
         >
           {showLandmarks ? "Landmarks on" : "Landmarks off"}
@@ -834,13 +834,13 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
           type="button"
           onClick={() => setIs3D((value) => !value)}
           className={`rounded-full px-3 py-1 transition ${
-            is3D ? "bg-[#1f3d2d] text-white" : "text-[#1f3d2d]"
+            is3D ? "bg-[#2454a0] text-white" : "text-[#d6e5ff]"
           }`}
         >
           {is3D ? "3D view" : "2D view"}
         </button>
       </div>
-      <div className="absolute right-3 top-3 z-10 w-[180px] rounded-2xl border border-[#eadfce] bg-white/95 p-2 text-[10px] shadow-sm backdrop-blur sm:right-5 sm:top-5 sm:w-[240px] sm:text-[11px]">
+      <div className="absolute right-3 top-3 z-10 w-[180px] rounded-2xl border border-[#284675] bg-[#08152f]/88 p-2 text-[10px] shadow-sm backdrop-blur sm:right-5 sm:top-5 sm:w-[240px] sm:text-[11px]">
         <div
           className="flex flex-col gap-2 sm:flex-row sm:items-center"
           suppressHydrationWarning
@@ -854,20 +854,20 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
               }
             }}
             placeholder="Search places"
-            className="w-full rounded-full border border-[#eadfce] bg-white px-2 py-2 text-[10px] text-[#14110f] sm:px-3 sm:text-[11px]"
+            className="w-full rounded-full border border-[#365a94] bg-[#0d1f3f] px-2 py-2 text-[10px] text-[#e8eefc] sm:px-3 sm:text-[11px]"
           />
           <button
             type="button"
             onClick={runSearch}
             disabled={!searchQuery.trim() || searchLoading}
-            className="rounded-full bg-[#1f3d2d] px-3 py-2 text-[10px] font-semibold text-white disabled:opacity-60"
+            className="rounded-full bg-[#d1a741] px-3 py-2 text-[10px] font-semibold text-[#091631] disabled:opacity-60"
           >
             {searchLoading ? "..." : "Go"}
           </button>
           <button
             type="button"
             onClick={onFiltersClick}
-            className="w-full rounded-full border border-[#eadfce] bg-white px-3 py-2 text-[10px] font-semibold text-[#5a4a44] sm:hidden"
+            className="w-full rounded-full border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-[10px] font-semibold text-[#d6e5ff] sm:hidden"
           >
             Filters
           </button>
