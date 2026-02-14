@@ -1,5 +1,11 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
+import {
+  getFirestore,
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+  type Firestore,
+} from "firebase/firestore";
 import { getAuth } from "firebase/auth";
 import { getStorage } from "firebase/storage";
 import { getDatabase } from "firebase/database";
@@ -18,8 +24,22 @@ const firebaseConfig = {
 // Singleton pattern to prevent re-initialization
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 
+const createFirestore = (): Firestore => {
+  if (typeof window === "undefined") {
+    return getFirestore(app);
+  }
+  try {
+    return initializeFirestore(app, {
+      localCache: persistentLocalCache({
+        tabManager: persistentMultipleTabManager(),
+      }),
+    });
+  } catch {
+    return getFirestore(app);
+  }
+};
 
-export const db = getFirestore(app);
+export const db = createFirestore();
 export const auth = getAuth(app);
 export const storage = getStorage(app);
 export const realtimeDb = getDatabase(app);

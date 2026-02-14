@@ -127,6 +127,7 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
     distance: string;
     duration: string;
   } | null>(null);
+  const [routeFocusMode, setRouteFocusMode] = useState(false);
   const [routeLoading, setRouteLoading] = useState(false);
   const [essentialEnabled, setEssentialEnabled] = useState<
     Record<EssentialLayerKey, boolean>
@@ -501,6 +502,10 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
   }, [favoritePlotIds]);
 
   useEffect(() => {
+    setRouteFocusMode(false);
+  }, [activePlot]);
+
+  useEffect(() => {
     if (!activePlot || !mutationFormOpen) {
       setSoldOverlays([]);
       return;
@@ -819,7 +824,7 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
   }, [is3D]);
 
   return (
-    <div className="relative h-[55vh] min-h-[360px] w-full overflow-hidden rounded-[20px] border border-[#284675] bg-[#08152f] shadow-[0_35px_80px_-50px_rgba(0,0,0,0.9)] sm:h-[65vh] sm:min-h-[520px] md:h-[720px] md:rounded-[32px]">
+    <div className="relative h-[84vh] min-h-[620px] w-full overflow-hidden rounded-[20px] border border-[#284675] bg-[#08152f] shadow-[0_35px_80px_-50px_rgba(0,0,0,0.9)] sm:h-[76vh] sm:min-h-[640px] md:h-[760px] md:rounded-[32px]">
       <div className="absolute left-3 top-3 z-10 flex flex-wrap gap-2 rounded-full border border-[#284675] bg-[#08152f]/85 px-2 py-2 text-[10px] font-semibold text-[#d6e5ff] shadow-sm backdrop-blur sm:left-5 sm:top-5 sm:px-3 sm:py-2 sm:text-xs">
         <button
           type="button"
@@ -980,17 +985,17 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
       </div>
       <div ref={containerRef} className="h-full w-full" />
 
-      {activePlot && (
-        <div className="absolute inset-x-3 bottom-3 z-20 w-auto max-h-[calc(100%-1.5rem)] overflow-y-auto rounded-3xl border border-[#eadfce] bg-white/95 p-4 text-xs shadow-[0_20px_60px_-40px_rgba(20,17,15,0.6)] backdrop-blur transition-transform duration-300 ease-out animate-slide-up sm:inset-x-auto sm:bottom-6 sm:right-6 sm:top-6 sm:w-[280px] sm:max-h-[calc(100%-3rem)] sm:overflow-y-auto">
+      {activePlot && !routeFocusMode && (
+        <div className="absolute inset-x-3 bottom-3 z-20 w-auto max-h-[calc(100%-1.5rem)] overflow-y-auto rounded-3xl border border-[#365a94] bg-[#0a1834]/95 p-4 text-xs text-[#e9f0ff] shadow-[0_20px_60px_-40px_rgba(0,0,0,0.85)] backdrop-blur transition-transform duration-300 ease-out animate-slide-up sm:inset-x-auto sm:bottom-6 sm:right-6 sm:top-6 sm:w-[300px] sm:max-h-[calc(100%-3rem)] sm:overflow-y-auto">
           <div className="flex items-start justify-between">
             <div>
-              <p className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+              <p className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
                 {activePlot.id}
               </p>
-              <p className="mt-2 text-sm font-semibold text-[#14110f]">
+              <p className="mt-2 text-sm font-semibold text-[#f3f7ff]">
                 {activePlot.label}
               </p>
-              <p className="mt-1 text-[#5a4a44]">
+              <p className="mt-1 text-[#c6d6f7]">
                 {activePlot.size} · {activePlot.price}
               </p>
             </div>
@@ -1007,6 +1012,7 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
                 setDistanceTargetCenter(null);
                 setDistanceKm(null);
                 setRouteSummary(null);
+                setRouteFocusMode(false);
                 directionsRendererRef.current?.setMap(null);
                 directionsRendererRef.current = null;
                 setVisitBookingOpen(false);
@@ -1017,12 +1023,12 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
                 setVisitError(null);
                 setVisitSuccess(null);
               }}
-              className="rounded-full border border-[#eadfce] px-2 py-1 text-[10px] text-[#5a4a44]"
+              className="rounded-full border border-[#365a94] bg-[#0d1f3f] px-2 py-1 text-[10px] text-[#c6d6f7]"
             >
               Close
             </button>
           </div>
-          <div className="mt-3 space-y-2 text-[11px] text-[#3a2f2a]">
+          <div className="mt-3 space-y-2 text-[11px] text-[#dce8ff]">
             <p>
               Vendor: {activePlot.vendor} · {activePlot.vendorType}
             </p>
@@ -1033,13 +1039,13 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
                 : "Not provided"}
             </p>
             {activePlot.totalParcels && activePlot.totalParcels > 1 && (
-              <p className="text-[#3a2f2a]">
+              <p className="text-[#dce8ff]">
                 Parcels: {activePlot.availableParcels ?? 0} available of{" "}
                 {activePlot.totalParcels}
               </p>
             )}
             {(activePlot.soldParcelIds?.length ?? 0) > 0 && (
-              <p className="text-[#8b2f2f]">
+              <p className="text-[#f2a6a6]">
                 Sold parcels: {activePlot.soldParcelIds?.join(", ")}
               </p>
             )}
@@ -1056,8 +1062,8 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
               }
               className={`rounded-full px-3 py-2 text-[11px] font-semibold ${
                 favoritePlotIds.includes(activePlot.id)
-                  ? "bg-[#c77d4b] text-white"
-                  : "border border-[#1f3d2d]/30 text-[#1f3d2d]"
+                  ? "bg-[#d1a741] text-[#091631]"
+                  : "border border-[#365a94] bg-[#0d1f3f] text-[#c6d6f7]"
               }`}
             >
               {favoritePlotIds.includes(activePlot.id)
@@ -1067,14 +1073,14 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
             <button
               type="button"
               onClick={() => setVisitBookingOpen((current) => !current)}
-              className="rounded-full border border-[#1f3d2d]/30 px-3 py-2 text-[11px] font-semibold text-[#1f3d2d]"
+              className="rounded-full border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-[11px] font-semibold text-[#c6d6f7]"
             >
               {visitBookingOpen ? "Close visit form" : "Request site visit"}
             </button>
           </div>
           {visitBookingOpen && (
-            <div className="mt-2 rounded-2xl border border-[#eadfce] bg-white p-3">
-              <p className="text-[10px] uppercase tracking-[0.2em] text-[#a67047]">
+            <div className="mt-2 rounded-2xl border border-[#365a94] bg-[#0d1f3f] p-3">
+              <p className="text-[10px] uppercase tracking-[0.2em] text-[#d1a741]">
                 Visit booking
               </p>
               <div className="mt-2 space-y-2">
@@ -1083,45 +1089,45 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
                   value={visitName}
                   onChange={(event) => setVisitName(event.target.value)}
                   placeholder="Your name"
-                  className="w-full rounded-2xl border border-[#eadfce] px-3 py-2 text-[11px]"
+                  className="w-full rounded-2xl border border-[#365a94] bg-[#091631] px-3 py-2 text-[11px] text-[#e9f0ff] placeholder:text-[#8ea5cf]"
                 />
                 <input
                   type="tel"
                   value={visitPhone}
                   onChange={(event) => setVisitPhone(event.target.value)}
                   placeholder="Phone number"
-                  className="w-full rounded-2xl border border-[#eadfce] px-3 py-2 text-[11px]"
+                  className="w-full rounded-2xl border border-[#365a94] bg-[#091631] px-3 py-2 text-[11px] text-[#e9f0ff] placeholder:text-[#8ea5cf]"
                 />
                 <input
                   type="datetime-local"
                   value={visitDate}
                   onChange={(event) => setVisitDate(event.target.value)}
-                  className="w-full rounded-2xl border border-[#eadfce] px-3 py-2 text-[11px]"
+                  className="w-full rounded-2xl border border-[#365a94] bg-[#091631] px-3 py-2 text-[11px] text-[#e9f0ff]"
                 />
                 <textarea
                   rows={2}
                   value={visitNote}
                   onChange={(event) => setVisitNote(event.target.value)}
                   placeholder="Any note for the agent"
-                  className="w-full rounded-2xl border border-[#eadfce] px-3 py-2 text-[11px]"
+                  className="w-full rounded-2xl border border-[#365a94] bg-[#091631] px-3 py-2 text-[11px] text-[#e9f0ff] placeholder:text-[#8ea5cf]"
                 />
                 {visitError && <p className="text-[10px] text-[#b3261e]">{visitError}</p>}
                 {visitSuccess && (
-                  <p className="text-[10px] text-[#1f3d2d]">{visitSuccess}</p>
+                  <p className="text-[10px] text-[#90d1a2]">{visitSuccess}</p>
                 )}
                 <button
                   type="button"
                   onClick={submitVisitBooking}
                   disabled={visitSaving}
-                  className="w-full rounded-full bg-[#1f3d2d] px-3 py-2 text-[11px] font-semibold text-white disabled:opacity-60"
+                  className="w-full rounded-full bg-[#2454a0] px-3 py-2 text-[11px] font-semibold text-white disabled:opacity-60"
                 >
                   {visitSaving ? "Submitting..." : "Submit visit request"}
                 </button>
               </div>
             </div>
           )}
-          <div className="mt-3 rounded-2xl border border-[#eadfce] bg-white p-3">
-            <p className="text-[10px] uppercase tracking-[0.2em] text-[#a67047]">
+          <div className="mt-3 rounded-2xl border border-[#365a94] bg-[#0d1f3f] p-3">
+            <p className="text-[10px] uppercase tracking-[0.2em] text-[#d1a741]">
               Distance checker
             </p>
             <div className="mt-2 flex items-center gap-2">
@@ -1135,13 +1141,13 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
                   }
                 }}
                 placeholder="Search a location"
-                className="w-full rounded-full border border-[#eadfce] bg-white px-3 py-2 text-[11px] text-[#14110f]"
+                className="w-full rounded-full border border-[#365a94] bg-[#091631] px-3 py-2 text-[11px] text-[#e9f0ff] placeholder:text-[#8ea5cf]"
               />
               <button
                 type="button"
                 onClick={runDistanceSearch}
                 disabled={!distanceQuery.trim() || distanceLoading}
-                className="rounded-full bg-[#1f3d2d] px-3 py-2 text-[10px] font-semibold text-white disabled:opacity-60"
+                className="rounded-full bg-[#2454a0] px-3 py-2 text-[10px] font-semibold text-white disabled:opacity-60"
               >
                 {distanceLoading ? "..." : "Go"}
               </button>
@@ -1150,7 +1156,7 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
               <p className="mt-2 text-[10px] text-[#b3261e]">{distanceError}</p>
             )}
             {distanceResults.length > 0 && (
-              <div className="mt-2 max-h-28 overflow-auto rounded-xl border border-[#eadfce] bg-white">
+              <div className="mt-2 max-h-28 overflow-auto rounded-xl border border-[#365a94] bg-[#091631]">
                 {distanceResults.map((result) => (
                   <button
                     key={result.id}
@@ -1163,7 +1169,7 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
                       setDistanceKm(km);
                       drawRouteToPlot(result.center, activePlot.center);
                     }}
-                    className="block w-full border-b border-[#f1e6d7] px-3 py-2 text-left text-[10px] text-[#5a4a44] hover:bg-[#fbf8f3]"
+                    className="block w-full border-b border-[#27497a] px-3 py-2 text-left text-[10px] text-[#dce8ff] hover:bg-[#102549]"
                   >
                     {result.place_name}
                   </button>
@@ -1171,30 +1177,39 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
               </div>
             )}
             {distanceKm !== null && distanceTargetName && (
-              <p className="mt-2 text-[11px] text-[#1f3d2d]">
+              <p className="mt-2 text-[11px] text-[#dce8ff]">
                 Distance to {distanceTargetName}:{" "}
                 <span className="font-semibold">{formatDistance(distanceKm)}</span>
               </p>
             )}
             {routeLoading && (
-              <p className="mt-1 text-[10px] text-[#7a5f54]">Loading route...</p>
+              <p className="mt-1 text-[10px] text-[#9eb6e1]">Loading route...</p>
             )}
             {routeSummary && (
-              <p className="mt-1 text-[10px] text-[#5a4a44]">
+              <p className="mt-1 text-[10px] text-[#c6d6f7]">
                 Drive route: {routeSummary.distance} ({routeSummary.duration})
               </p>
             )}
             {distanceTargetCenter && (
-              <button
-                type="button"
-                onClick={() => drawRouteToPlot(distanceTargetCenter, activePlot.center)}
-                className="mt-2 rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#1f3d2d]"
-              >
-                Refresh route
-              </button>
+              <div className="mt-2 grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => drawRouteToPlot(distanceTargetCenter, activePlot.center)}
+                  className="rounded-full border border-[#365a94] bg-[#091631] px-3 py-1 text-[10px] text-[#dce8ff]"
+                >
+                  Refresh route
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setRouteFocusMode(true)}
+                  className="rounded-full bg-[#d1a741] px-3 py-1 text-[10px] font-semibold text-[#091631]"
+                >
+                  Hide card
+                </button>
+              </div>
             )}
           </div>
-          <div className="mt-2 rounded-2xl border border-[#eadfce] bg-white p-3">
+          <div className="mt-2 rounded-2xl border border-[#365a94] bg-[#0d1f3f] p-3">
             <button
               type="button"
               onClick={() => {
@@ -1204,11 +1219,11 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
                 )}`;
                 window.open(url, "_blank", "noopener,noreferrer");
               }}
-              className="w-full rounded-full border border-[#1f3d2d]/30 px-3 py-2 text-[11px] font-semibold text-[#1f3d2d]"
+              className="w-full rounded-full border border-[#365a94] bg-[#091631] px-3 py-2 text-[11px] font-semibold text-[#dce8ff]"
             >
               Share to Maps
             </button>
-            <p className="mt-2 text-[10px] text-[#7a5f54]">
+            <p className="mt-2 text-[10px] text-[#9eb6e1]">
               Share parcel location to Google Maps to get directions for accessing
               this parcel.
             </p>
@@ -1222,7 +1237,7 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
                     setMutationFormOpen(true);
                     setSoldOverlays([]);
                   }}
-                  className="mt-2 w-full rounded-full border border-[#1f3d2d]/30 px-3 py-2 text-[11px] font-semibold text-[#1f3d2d]"
+                  className="mt-2 w-full rounded-full border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-[11px] font-semibold text-[#dce8ff]"
                 >
                   View mutation form
                 </button>
@@ -1230,7 +1245,7 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
               <button
                 type="button"
                 onClick={() => setInquiryOpen(true)}
-                className="mt-2 w-full rounded-full border border-[#1f3d2d]/30 px-3 py-2 text-[11px] font-semibold text-[#1f3d2d]"
+                className="mt-2 w-full rounded-full border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-[11px] font-semibold text-[#dce8ff]"
               >
                 Inquire about property
               </button>
@@ -1244,7 +1259,7 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
               }}
             >
               <div>
-                <label className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                <label className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
                   Name
                 </label>
                 <input
@@ -1252,11 +1267,11 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
                   value={inquiryName}
                   onChange={(event) => setInquiryName(event.target.value)}
                   placeholder="Your name"
-                  className="mt-2 w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-xs text-[#14110f]"
+                  className="mt-2 w-full rounded-2xl border border-[#365a94] bg-[#091631] px-3 py-2 text-xs text-[#e9f0ff] placeholder:text-[#8ea5cf]"
                 />
               </div>
               <div>
-                <label className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                <label className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
                   Phone number
                 </label>
                 <input
@@ -1264,11 +1279,11 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
                   value={inquiryPhone}
                   onChange={(event) => setInquiryPhone(event.target.value)}
                   placeholder="+254 7xx xxx xxx"
-                  className="mt-2 w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-xs text-[#14110f]"
+                  className="mt-2 w-full rounded-2xl border border-[#365a94] bg-[#091631] px-3 py-2 text-xs text-[#e9f0ff] placeholder:text-[#8ea5cf]"
                 />
               </div>
               <div>
-                <label className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                <label className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
                   Preferred contact
                 </label>
                 <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
@@ -1283,8 +1298,8 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
                       }
                       className={`rounded-full px-3 py-1 text-[11px] transition ${
                         inquiryMethod === method
-                          ? "bg-[#c77d4b] text-white"
-                          : "border border-[#eadfce] bg-white text-[#6b3e1e]"
+                          ? "bg-[#d1a741] text-[#091631]"
+                          : "border border-[#365a94] bg-[#091631] text-[#c6d6f7]"
                       }`}
                     >
                       {method}
@@ -1293,7 +1308,7 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
                 </div>
               </div>
               <div>
-                <label className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                <label className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
                   Message
                 </label>
                 <textarea
@@ -1301,11 +1316,11 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
                   onChange={(event) => setInquiryMessage(event.target.value)}
                   rows={3}
                   placeholder="Ask about access, pricing, docs, or timelines."
-                  className="mt-2 w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-xs text-[#14110f]"
+                  className="mt-2 w-full rounded-2xl border border-[#365a94] bg-[#091631] px-3 py-2 text-xs text-[#e9f0ff] placeholder:text-[#8ea5cf]"
                 />
               </div>
               {inquiryError && (
-                <div className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-[10px] text-[#b3261e]">
+                <div className="rounded-2xl border border-[#8d3b3b] bg-[#2c1117] px-3 py-2 text-[10px] text-[#ffb1b1]">
                   {inquiryError}
                 </div>
               )}
@@ -1313,14 +1328,14 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
                 <button
                   type="button"
                   onClick={() => setInquiryOpen(false)}
-                  className="w-full rounded-full border border-[#eadfce] px-3 py-2 text-[11px] text-[#5a4a44]"
+                  className="w-full rounded-full border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-[11px] text-[#c6d6f7]"
                   disabled={inquirySaving}
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
-                  className="w-full rounded-full bg-[#1f3d2d] px-3 py-2 text-[11px] font-semibold text-white"
+                  className="w-full rounded-full bg-[#2454a0] px-3 py-2 text-[11px] font-semibold text-white"
                   disabled={inquirySaving}
                 >
                   {inquirySaving ? "Sending..." : "Send inquiry"}
@@ -1329,6 +1344,15 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
             </form>
           )}
         </div>
+      )}
+      {activePlot && routeFocusMode && (
+        <button
+          type="button"
+          onClick={() => setRouteFocusMode(false)}
+          className="absolute right-3 top-3 z-20 rounded-full bg-[#d1a741] px-4 py-2 text-[11px] font-semibold text-[#091631] shadow-[0_12px_24px_-16px_rgba(0,0,0,0.8)] sm:right-6 sm:top-6"
+        >
+          Show card
+        </button>
       )}
 
       {galleryOpen && activePlot && (
@@ -1402,39 +1426,39 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
       )}
       {mutationFormOpen && activePlot?.mutationForm?.url && (
         <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-3 py-3 sm:px-4 sm:py-6">
-          <div className="w-full max-w-3xl max-h-[92vh] overflow-y-auto rounded-3xl border border-[#eadfce] bg-[#fbf8f3] p-4 shadow-[0_30px_70px_-40px_rgba(20,17,15,0.6)] sm:p-6">
+          <div className="w-full max-w-3xl max-h-[92vh] overflow-y-auto rounded-3xl border border-[#365a94] bg-[#0a1834]/95 p-4 text-[#e9f0ff] shadow-[0_30px_70px_-40px_rgba(0,0,0,0.8)] sm:p-6">
             <div className="flex items-center justify-between">
-              <p className="text-sm font-semibold text-[#14110f]">
+              <p className="text-sm font-semibold text-[#f3f7ff]">
                 Mutation form
               </p>
               <button
                 type="button"
                 onClick={() => setMutationFormOpen(false)}
-                className="rounded-full border border-[#eadfce] px-3 py-1 text-xs text-[#5a4a44]"
+                className="rounded-full border border-[#365a94] bg-[#0d1f3f] px-3 py-1 text-xs text-[#c6d6f7]"
               >
                 Close
               </button>
             </div>
             <div className="mt-3 flex flex-wrap items-center gap-2">
               {(activePlot.soldParcelIds?.length ?? 0) === 0 && (
-                <span className="text-[11px] text-[#7a5f54]">
+                <span className="text-[11px] text-[#9eb6e1]">
                   No sold parcels yet.
                 </span>
               )}
               {soldOverlays.length > 0 && (
-                <span className="rounded-full border border-[#eadfce] bg-white px-3 py-1 text-[11px] text-[#8b2f2f]">
+                <span className="rounded-full border border-[#6a8cc2] bg-[#132b52] px-3 py-1 text-[11px] text-[#ffd5d5]">
                   Highlighting {soldOverlays.length} sold parcel(s)
                 </span>
               )}
               {!mutationFormIsPdf &&
                 (activePlot.soldParcelIds?.length ?? 0) > 0 &&
                 soldOverlays.length === 0 && (
-                  <span className="text-[11px] text-[#7a5f54]">
+                  <span className="text-[11px] text-[#9eb6e1]">
                     Parcel polygons were not extracted for this mutation form.
                   </span>
                 )}
             </div>
-            <div className="mt-4 h-[58vh] overflow-hidden rounded-2xl border border-[#eadfce] bg-white sm:h-[65vh]">
+            <div className="mt-4 h-[58vh] overflow-hidden rounded-2xl border border-[#365a94] bg-[#0d1f3f] sm:h-[65vh]">
               {mutationFormIsPdf ? (
                 <iframe
                   src={activePlot.mutationForm.url}
@@ -1471,11 +1495,11 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
               )}
             </div>
             {soldOverlays.length > 0 && (
-              <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-[#5a4a44]">
+              <div className="mt-3 flex flex-wrap gap-2 text-[11px] text-[#c6d6f7]">
                 {soldOverlays.map((overlay) => (
                   <span
                     key={`sold-pill-${overlay.parcelNumber}`}
-                    className="rounded-full border border-[#eadfce] bg-white px-3 py-1"
+                    className="rounded-full border border-[#365a94] bg-[#0d1f3f] px-3 py-1"
                   >
                     Parcel {overlay.parcelNumber}
                     {typeof overlay.confidence === "number"

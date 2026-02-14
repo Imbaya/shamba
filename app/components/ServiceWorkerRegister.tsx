@@ -19,12 +19,44 @@ export default function ServiceWorkerRegister() {
           );
           return;
         }
-        await navigator.serviceWorker.register("/sw.js");
+        const registration = await navigator.serviceWorker.register("/sw.js");
+        await registration.update();
+
+        if (registration.waiting) {
+          registration.waiting.postMessage("SKIP_WAITING");
+        }
+
+        registration.addEventListener("updatefound", () => {
+          const worker = registration.installing;
+          if (!worker) return;
+          worker.addEventListener("statechange", () => {
+            if (
+              worker.state === "installed" &&
+              navigator.serviceWorker.controller
+            ) {
+              worker.postMessage("SKIP_WAITING");
+            }
+          });
+        });
       } catch {
         // Silent failure: PWA should still work without SW.
       }
     };
     syncServiceWorker();
+
+    let hasRefreshed = false;
+    const onControllerChange = () => {
+      if (hasRefreshed) return;
+      hasRefreshed = true;
+      window.location.reload();
+    };
+    navigator.serviceWorker.addEventListener("controllerchange", onControllerChange);
+    return () => {
+      navigator.serviceWorker.removeEventListener(
+        "controllerchange",
+        onControllerChange
+      );
+    };
   }, []);
 
   return null;

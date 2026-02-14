@@ -299,9 +299,9 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen bg-[radial-gradient(circle_at_12%_10%,_rgba(209,167,65,0.22),_transparent_28%),radial-gradient(circle_at_88%_12%,_rgba(74,160,255,0.2),_transparent_34%),linear-gradient(120deg,_#050b1a_0%,_#07122a_45%,_#091631_100%)] text-[#e8eefc]">
-      <div className="mx-auto flex max-w-6xl items-center justify-between px-4 py-6 sm:px-6">
-        <div className="flex items-center gap-3">
+    <div className="min-h-screen overflow-x-hidden bg-[radial-gradient(circle_at_12%_10%,_rgba(209,167,65,0.22),_transparent_28%),radial-gradient(circle_at_88%_12%,_rgba(74,160,255,0.2),_transparent_34%),linear-gradient(120deg,_#050b1a_0%,_#07122a_45%,_#091631_100%)] text-[#e8eefc]">
+      <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-5 sm:flex-nowrap sm:px-6 sm:py-6">
+        <div className="flex min-w-0 items-center gap-3">
           <div
             className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-2xl bg-[#0d1f3f]"
             suppressHydrationWarning
@@ -312,11 +312,13 @@ export default function Home() {
               <span className="text-lg font-semibold text-[#f6f9ff]">PT</span>
             )}
           </div>
-          <div>
-            <p className="text-sm uppercase tracking-[0.3em] text-[#a9c7ff]">
+          <div className="min-w-0">
+            <p className="truncate text-xs uppercase tracking-[0.25em] text-[#a9c7ff] sm:text-sm sm:tracking-[0.3em]">
               PlotTrust
             </p>
-            <p className="text-xs text-[#c6d6f7]">Ground-truth land listings</p>
+            <p className="truncate text-[11px] text-[#c6d6f7] sm:text-xs">
+              Ground-truth land listings
+            </p>
           </div>
         </div>
         <div className="hidden items-center gap-3 text-sm font-medium md:flex">
@@ -334,28 +336,28 @@ export default function Home() {
           </button>
         </div>
       </div>
-      <div className="mx-auto grid max-w-6xl grid-cols-3 items-center gap-2 px-4 pb-4 sm:px-6 md:hidden">
+      <div className="mx-auto grid max-w-6xl grid-cols-3 items-stretch gap-2 px-4 pb-4 sm:px-6 md:hidden">
         <button
-          className="w-full rounded-full border border-[#4a78c7]/60 bg-[#09142b]/70 px-3 py-2 text-xs font-semibold text-[#cfe1ff] transition hover:border-[#6f9df0]"
+          className="w-full rounded-full border border-[#4a78c7]/60 bg-[#09142b]/70 px-2 py-2 text-[11px] font-semibold leading-tight text-[#cfe1ff] transition hover:border-[#6f9df0]"
           onClick={() => setFiltersOpen(true)}
         >
           Filters
         </button>
         <button
-          className="w-full rounded-full border border-[#4a78c7]/60 bg-[#09142b]/70 px-3 py-2 text-xs font-semibold text-[#cfe1ff] transition hover:border-[#6f9df0]"
+          className="w-full rounded-full border border-[#4a78c7]/60 bg-[#09142b]/70 px-2 py-2 text-[11px] font-semibold leading-tight text-[#cfe1ff] transition hover:border-[#6f9df0]"
           onClick={() => setLoginOpen(true)}
         >
           Manage property
         </button>
         <button
-          className="w-full rounded-full bg-[#d1a741] px-3 py-2 text-xs font-semibold text-[#091631] transition hover:bg-[#dfbc66]"
+          className="w-full rounded-full bg-[#d1a741] px-2 py-2 text-[11px] font-semibold leading-tight text-[#091631] transition hover:bg-[#dfbc66]"
           onClick={() => setSignupOpen(true)}
         >
           Register
         </button>
       </div>
 
-      <main className="mx-auto grid max-w-7xl gap-8 px-4 pb-16 pt-4 sm:px-6 lg:grid-cols-[260px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)] lg:items-start">
+      <main className="mx-auto grid max-w-7xl gap-6 px-4 pb-12 pt-2 sm:gap-8 sm:px-6 sm:pb-16 sm:pt-4 lg:grid-cols-[260px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)] lg:items-start">
         <section className="order-2 hidden min-h-[720px] flex-col rounded-3xl border border-[#284675] bg-[#09142b]/82 p-5 shadow-[0_25px_70px_-45px_rgba(0,0,0,0.9)] backdrop-blur lg:order-1 lg:flex">
           <p className="text-xs uppercase tracking-[0.35em] text-[#d1a741]">
             Live map
@@ -487,7 +489,7 @@ export default function Home() {
           </div>
         </section>
 
-        <section className="relative order-1 lg:order-2">
+        <section className="relative order-1 min-w-0 lg:order-2">
           <MapboxMap
             plots={filteredPlots.map((plot) => ({
               id: plot.id,
@@ -513,7 +515,7 @@ export default function Home() {
             onFiltersClick={() => setFiltersOpen(true)}
           />
 
-          <div className="pointer-events-none absolute left-4 top-4 rounded-full bg-white/80 px-3 py-1 text-xs font-semibold text-[#1f3d2d] backdrop-blur sm:left-6 sm:top-6">
+          <div className="pointer-events-none absolute left-3 top-3 max-w-[calc(100%-1.5rem)] truncate rounded-full bg-white/80 px-3 py-1 text-[11px] font-semibold text-[#1f3d2d] backdrop-blur sm:left-6 sm:top-6 sm:max-w-none sm:text-xs">
             Western District
           </div>
 
@@ -658,7 +660,7 @@ export default function Home() {
         </section>
       </main>
 
-      <div className="border-t border-[#284675] px-6 py-6 text-xs text-[#95add8]" />
+      <div className="border-t border-[#284675] px-4 py-6 text-xs text-[#95add8] sm:px-6" />
 
       {signupOpen && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6">
