@@ -30,6 +30,7 @@ export default function Home() {
           vendorName?: string;
           vendorType?: "Company" | "Individual";
           vendorId?: string;
+          portalId?: string | null;
           soldParcelIds?: number[];
           plotLocation?: { lat?: number; lng?: number };
           parcels?: { name?: string; cleanPath?: { lat: number; lng: number }[] }[];
@@ -94,6 +95,7 @@ export default function Home() {
           polygon: polygon.length >= 3 ? polygon : undefined,
           vendor: data.vendorName || "Vendor",
           vendorId: data.vendorId,
+          portalId: data.portalId ?? null,
           vendorType: data.vendorType || "Individual",
           amenities: data.amenities || [],
           totalParcels,
@@ -187,6 +189,8 @@ export default function Home() {
     "All"
   );
   const [selectedAmenities, setSelectedAmenities] = useState<string[]>([]);
+  const [minPriceFilter, setMinPriceFilter] = useState("");
+  const [maxPriceFilter, setMaxPriceFilter] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [signupOpen, setSignupOpen] = useState(false);
   const [loginOpen, setLoginOpen] = useState(false);
@@ -200,12 +204,26 @@ export default function Home() {
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
 
+  const parsePlotPrice = (price: string) => {
+    const numeric = Number(price.replace(/[^0-9.]/g, ""));
+    return Number.isFinite(numeric) ? numeric : 0;
+  };
+
   const filteredPlots = useMemo(() => {
+    const min = Number(minPriceFilter.replace(/[^0-9.]/g, ""));
+    const max = Number(maxPriceFilter.replace(/[^0-9.]/g, ""));
     return allPlots.filter((plot) => {
       if (selectedVendor !== "All vendors" && plot.vendor !== selectedVendor) {
         return false;
       }
       if (vendorType !== "All" && plot.vendorType !== vendorType) {
+        return false;
+      }
+      const price = parsePlotPrice(plot.price);
+      if (Number.isFinite(min) && min > 0 && price < min) {
+        return false;
+      }
+      if (Number.isFinite(max) && max > 0 && price > max) {
         return false;
       }
       if (selectedAmenities.length > 0) {
@@ -215,7 +233,14 @@ export default function Home() {
       }
       return true;
     });
-  }, [allPlots, selectedAmenities, selectedVendor, vendorType]);
+  }, [
+    allPlots,
+    maxPriceFilter,
+    minPriceFilter,
+    selectedAmenities,
+    selectedVendor,
+    vendorType,
+  ]);
 
   const handleSignup = async () => {
     setAuthError(null);
@@ -309,15 +334,21 @@ export default function Home() {
           </button>
         </div>
       </div>
-      <div className="mx-auto flex max-w-6xl items-center gap-3 px-4 pb-4 sm:px-6 md:hidden">
+      <div className="mx-auto grid max-w-6xl grid-cols-3 items-center gap-2 px-4 pb-4 sm:px-6 md:hidden">
         <button
-          className="flex-1 rounded-full border border-[#1f3d2d]/30 px-4 py-2 text-sm font-semibold text-[#1f3d2d] transition hover:border-[#1f3d2d]"
+          className="w-full rounded-full border border-[#1f3d2d]/30 px-3 py-2 text-xs font-semibold text-[#1f3d2d] transition hover:border-[#1f3d2d]"
+          onClick={() => setFiltersOpen(true)}
+        >
+          Filters
+        </button>
+        <button
+          className="w-full rounded-full border border-[#1f3d2d]/30 px-3 py-2 text-xs font-semibold text-[#1f3d2d] transition hover:border-[#1f3d2d]"
           onClick={() => setLoginOpen(true)}
         >
           Manage property
         </button>
         <button
-          className="flex-1 rounded-full bg-[#1f3d2d] px-4 py-2 text-sm font-semibold text-[#f7f3ea] transition hover:bg-[#173124]"
+          className="w-full rounded-full bg-[#1f3d2d] px-3 py-2 text-xs font-semibold text-[#f7f3ea] transition hover:bg-[#173124]"
           onClick={() => setSignupOpen(true)}
         >
           Register
@@ -418,12 +449,35 @@ export default function Home() {
                   })}
                 </div>
               </div>
+              <div>
+                <p className="text-[11px] font-semibold text-[#14110f]">Price range (Ksh)</p>
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <input
+                    type="number"
+                    min="0"
+                    value={minPriceFilter}
+                    onChange={(event) => setMinPriceFilter(event.target.value)}
+                    placeholder="Min"
+                    className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-xs text-[#14110f]"
+                  />
+                  <input
+                    type="number"
+                    min="0"
+                    value={maxPriceFilter}
+                    onChange={(event) => setMaxPriceFilter(event.target.value)}
+                    placeholder="Max"
+                    className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-xs text-[#14110f]"
+                  />
+                </div>
+              </div>
               <button
                 type="button"
                 onClick={() => {
                   setSelectedVendor("All vendors");
                   setVendorType("All");
                   setSelectedAmenities([]);
+                  setMinPriceFilter("");
+                  setMaxPriceFilter("");
                 }}
                 className="rounded-full border border-[#eadfce] px-3 py-2 text-[11px] text-[#5a4a44]"
               >
@@ -461,18 +515,6 @@ export default function Home() {
 
           <div className="pointer-events-none absolute left-4 top-4 rounded-full bg-white/80 px-3 py-1 text-xs font-semibold text-[#1f3d2d] backdrop-blur sm:left-6 sm:top-6">
             Western District
-          </div>
-
-          <div className="mt-4 flex flex-wrap items-center gap-2 text-[11px] text-[#3a2f2a] sm:gap-3 sm:text-xs">
-            <span className="rounded-full border border-[#eadfce] bg-white px-3 py-1">
-              Confidence scores shown
-            </span>
-            <span className="rounded-full border border-[#eadfce] bg-white px-3 py-1">
-              Walked perimeter overlays
-            </span>
-            <span className="rounded-full border border-[#eadfce] bg-white px-3 py-1">
-              4G-ready PWA map
-            </span>
           </div>
 
           {filtersOpen && (
@@ -563,6 +605,29 @@ export default function Home() {
                       })}
                     </div>
                   </div>
+                  <div>
+                    <p className="text-[11px] font-semibold text-[#14110f]">
+                      Price range (Ksh)
+                    </p>
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      <input
+                        type="number"
+                        min="0"
+                        value={minPriceFilter}
+                        onChange={(event) => setMinPriceFilter(event.target.value)}
+                        placeholder="Min"
+                        className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-xs text-[#14110f]"
+                      />
+                      <input
+                        type="number"
+                        min="0"
+                        value={maxPriceFilter}
+                        onChange={(event) => setMaxPriceFilter(event.target.value)}
+                        placeholder="Max"
+                        className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-xs text-[#14110f]"
+                      />
+                    </div>
+                  </div>
                   <div className="flex items-center justify-between">
                     <button
                       type="button"
@@ -570,6 +635,8 @@ export default function Home() {
                         setSelectedVendor("All vendors");
                         setVendorType("All");
                         setSelectedAmenities([]);
+                        setMinPriceFilter("");
+                        setMaxPriceFilter("");
                       }}
                       className="rounded-full border border-[#eadfce] px-3 py-2 text-[11px] text-[#5a4a44]"
                     >

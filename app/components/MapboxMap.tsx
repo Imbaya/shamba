@@ -1,10 +1,22 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import maplibregl, { type StyleSpecification } from "maplibre-gl";
-import "maplibre-gl/dist/maplibre-gl.css";
-import { addDoc, collection, serverTimestamp } from "firebase/firestore";
+import {
+  addDoc,
+  collection,
+  getDocs,
+  query,
+  serverTimestamp,
+  where,
+} from "firebase/firestore";
 import { db } from "../../lib/firebase";
+import {
+  type GoogleMapsApi,
+  type MapsDirectionsRenderer,
+  type MapsMap,
+  type MapsPolygon,
+  loadGoogleMapsApi,
+} from "../../lib/googleMapsLoader";
 
 export type Plot = {
   id: string;
@@ -13,6 +25,7 @@ export type Plot = {
   price: string;
   vendor: string;
   vendorId?: string;
+  portalId?: string | null;
   vendorType: "Company" | "Individual";
   amenities: string[];
   center: [number, number];
@@ -58,11 +71,25 @@ type ParcelOverlay = {
   points: OverlayPoint[];
 };
 
+type EssentialLayerKey =
+  | "schools"
+  | "hospitals"
+  | "roads"
+  | "water"
+  | "power";
+
 export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<maplibregl.Map | null>(null);
-  const markerRef = useRef<maplibregl.Marker[]>([]);
+  const mapRef = useRef<MapsMap | null>(null);
+  const mapsApiRef = useRef<GoogleMapsApi | null>(null);
+  const markerRef = useRef<(() => void)[]>([]);
+  const polygonRef = useRef<MapsPolygon[]>([]);
+  const essentialMarkerRef = useRef<(() => void)[]>([]);
+  const hasCenteredToUserRef = useRef(false);
+  const directionsRendererRef = useRef<MapsDirectionsRenderer | null>(null);
   const [is3D, setIs3D] = useState(false);
+  const [showLandmarks, setShowLandmarks] = useState(true);
+  const [mapReady, setMapReady] = useState(false);
   const [activePlot, setActivePlot] = useState<Plot | null>(null);
   const [galleryOpen, setGalleryOpen] = useState(false);
   const [galleryIndex, setGalleryIndex] = useState(0);
@@ -83,6 +110,44 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
   >([]);
   const [searchLoading, setSearchLoading] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [distanceQuery, setDistanceQuery] = useState("");
+  const [distanceResults, setDistanceResults] = useState<
+    { id: string; place_name: string; center: [number, number] }[]
+  >([]);
+  const [distanceLoading, setDistanceLoading] = useState(false);
+  const [distanceError, setDistanceError] = useState<string | null>(null);
+  const [distanceTargetName, setDistanceTargetName] = useState<string | null>(
+    null
+  );
+  const [distanceTargetCenter, setDistanceTargetCenter] = useState<
+    [number, number] | null
+  >(null);
+  const [distanceKm, setDistanceKm] = useState<number | null>(null);
+  const [routeSummary, setRouteSummary] = useState<{
+    distance: string;
+    duration: string;
+  } | null>(null);
+  const [routeLoading, setRouteLoading] = useState(false);
+  const [essentialEnabled, setEssentialEnabled] = useState<
+    Record<EssentialLayerKey, boolean>
+  >({
+    schools: false,
+    hospitals: false,
+    roads: false,
+    water: false,
+    power: false,
+  });
+  const [favoritePlotIds, setFavoritePlotIds] = useState<string[]>([]);
+  const [recentPlotIds, setRecentPlotIds] = useState<string[]>([]);
+  const [visitBookingOpen, setVisitBookingOpen] = useState(false);
+  const [visitName, setVisitName] = useState("");
+  const [visitPhone, setVisitPhone] = useState("");
+  const [visitDate, setVisitDate] = useState("");
+  const [visitNote, setVisitNote] = useState("");
+  const [visitSaving, setVisitSaving] = useState(false);
+  const [visitError, setVisitError] = useState<string | null>(null);
+  const [visitSuccess, setVisitSuccess] = useState<string | null>(null);
+  const googleMapId = process.env.NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID || "DEMO_MAP_ID";
 
   const listingImages = useMemo(
     () => activePlot?.surroundingImages?.filter((item) => item.url) ?? [],
@@ -95,102 +160,80 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
     },
     [activePlot]
   );
-  const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
-  const hasSatellite = Boolean(mapboxToken);
-  const fallbackStyleUrl =
-    "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json";
-  const mapboxSatelliteStyle = useMemo<StyleSpecification>(
-    () => ({
-      version: 8,
-      sources: {
-        "mapbox-satellite": {
-          type: "raster",
-            tiles: mapboxToken
-              ? [
-                  `https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}.jpg?access_token=${mapboxToken}`,
-                ]
-              : [],
-            tileSize: 256,
-            attribution: "© Mapbox © OpenStreetMap",
-          },
-          "mapbox-labels": {
-            type: "vector",
-            tiles: mapboxToken
-              ? [
-                  `https://api.mapbox.com/v4/mapbox.mapbox-streets-v8/{z}/{x}/{y}.vector.pbf?access_token=${mapboxToken}`,
-                ]
-              : [],
-          },
-        },
-        glyphs: mapboxToken
-          ? `https://api.mapbox.com/fonts/v1/mapbox/{fontstack}/{range}.pbf?access_token=${mapboxToken}`
-          : undefined,
-      layers: [
-        {
-          id: "satellite",
-          type: "raster",
-          source: "mapbox-satellite",
-        },
-        {
-          id: "place-labels",
-          type: "symbol",
-          source: "mapbox-labels",
-          "source-layer": "place_label",
-          layout: {
-            "text-field": ["coalesce", ["get", "name_en"], ["get", "name"]],
-            "text-size": 12,
-            "text-optional": true,
-          },
-          paint: {
-            "text-color": "#1f3d2d",
-            "text-halo-color": "#f7f3ea",
-            "text-halo-width": 1,
-          },
-        },
-        {
-          id: "poi-labels",
-          type: "symbol",
-          source: "mapbox-labels",
-          "source-layer": "poi_label",
-          layout: {
-            "text-field": ["coalesce", ["get", "name_en"], ["get", "name"]],
-            "text-size": 11,
-            "text-optional": true,
-          },
-          paint: {
-            "text-color": "#3a2f2a",
-            "text-halo-color": "#f7f3ea",
-            "text-halo-width": 1,
-          },
-        },
-      ],
-    }),
-    [mapboxToken]
-  );
-
+  const compactPriceLabel = (value: string) => {
+    const normalized = value.trim().toLowerCase();
+    const numeric = Number(normalized.replace(/[^0-9.]/g, ""));
+    if (!Number.isFinite(numeric) || numeric <= 0) return value;
+    if (numeric >= 1_000_000) {
+      const millions = numeric / 1_000_000;
+      const rounded = millions >= 10 ? Math.round(millions) : Math.round(millions * 10) / 10;
+      return `${rounded % 1 === 0 ? rounded.toFixed(0) : rounded.toFixed(1)}M`;
+    }
+    if (numeric >= 1_000) {
+      return `${Math.round(numeric / 1_000)}k`;
+    }
+    return `${Math.round(numeric)}`;
+  };
+  const toRad = (value: number) => (value * Math.PI) / 180;
+  const distanceBetweenKm = (a: [number, number], b: [number, number]) => {
+    const earthRadiusKm = 6371;
+    const dLat = toRad(b[1] - a[1]);
+    const dLng = toRad(b[0] - a[0]);
+    const lat1 = toRad(a[1]);
+    const lat2 = toRad(b[1]);
+    const hav =
+      Math.sin(dLat / 2) ** 2 +
+      Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+    return 2 * earthRadiusKm * Math.asin(Math.sqrt(hav));
+  };
+  const formatDistance = (km: number) =>
+    km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(km >= 10 ? 1 : 2)} km`;
   const visiblePlots = useMemo(
     () => (activePlot ? [activePlot] : plots),
     [activePlot, plots]
   );
+  const favoritePlots = useMemo(
+    () =>
+      favoritePlotIds
+        .map((id) => plots.find((plot) => plot.id === id))
+        .filter((plot): plot is Plot => Boolean(plot)),
+    [favoritePlotIds, plots]
+  );
+  const recentPlots = useMemo(
+    () =>
+      recentPlotIds
+        .map((id) => plots.find((plot) => plot.id === id))
+        .filter((plot): plot is Plot => Boolean(plot))
+        .slice(0, 6),
+    [plots, recentPlotIds]
+  );
+  const essentialLayerConfig = useMemo<
+    Record<EssentialLayerKey, { label: string; keyword: string; color: string }>
+  >(
+    () => ({
+      schools: { label: "Schools", keyword: "school", color: "#1f77b4" },
+      hospitals: { label: "Hospitals", keyword: "hospital", color: "#d62728" },
+      roads: { label: "Road points", keyword: "road junction", color: "#8c564b" },
+      water: { label: "Water points", keyword: "water point", color: "#17becf" },
+      power: { label: "Power points", keyword: "power station", color: "#ff7f0e" },
+    }),
+    []
+  );
 
   const runSearch = async () => {
     const trimmed = searchQuery.trim();
-    if (!trimmed || !mapboxToken) return;
+    if (!trimmed) return;
     setSearchLoading(true);
     setSearchError(null);
     try {
-      const response = await fetch(
-        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(
-          trimmed
-        )}.json?access_token=${mapboxToken}&limit=5`
-      );
+      const response = await fetch(`/api/google-geocode?q=${encodeURIComponent(trimmed)}`);
       if (!response.ok) {
         throw new Error("Search failed");
       }
       const data = (await response.json()) as {
-        features?: { id: string; place_name: string; center: [number, number] }[];
+        results?: { id: string; place_name: string; center: [number, number] }[];
       };
-      setSearchResults(data.features ?? []);
+      setSearchResults(data.results ?? []);
     } catch {
       setSearchError("Search failed. Try again.");
       setSearchResults([]);
@@ -198,26 +241,111 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
       setSearchLoading(false);
     }
   };
+  const runDistanceSearch = async () => {
+    const trimmed = distanceQuery.trim();
+    if (!trimmed) return;
+    setDistanceLoading(true);
+    setDistanceError(null);
+    try {
+      const response = await fetch(`/api/google-geocode?q=${encodeURIComponent(trimmed)}`);
+      if (!response.ok) {
+        throw new Error("Search failed");
+      }
+      const data = (await response.json()) as {
+        results?: { id: string; place_name: string; center: [number, number] }[];
+      };
+      setDistanceResults(data.results ?? []);
+      if ((data.results ?? []).length === 0) {
+        setDistanceError("No matching location found.");
+      }
+    } catch {
+      setDistanceError("Search failed. Try again.");
+      setDistanceResults([]);
+    } finally {
+      setDistanceLoading(false);
+    }
+  };
 
-  const geojson = useMemo(
-    () => ({
-      type: "FeatureCollection" as const,
-      features: visiblePlots
-        .filter((plot) => (plot.polygon?.length ?? 0) >= 3)
-        .map((plot) => ({
-        type: "Feature" as const,
-        properties: {
-          id: plot.id,
-          sold: Boolean(plot.isSold),
-        },
-        geometry: {
-          type: "Polygon" as const,
-          coordinates: [plot.polygon as [number, number][]],
-        },
-      })),
-    }),
-    [visiblePlots]
-  );
+  const drawRouteToPlot = async (
+    originCenter: [number, number],
+    plotCenter: [number, number]
+  ) => {
+    const maps = mapsApiRef.current;
+    const map = mapRef.current;
+    if (!maps || !map || !maps.DirectionsService || !maps.DirectionsRenderer) {
+      setDistanceError("Routing is not available on this map.");
+      return;
+    }
+    setRouteLoading(true);
+    try {
+      const service = new maps.DirectionsService();
+      const result = await service.route({
+        origin: { lat: originCenter[1], lng: originCenter[0] },
+        destination: { lat: plotCenter[1], lng: plotCenter[0] },
+        travelMode: maps.TravelMode?.DRIVING ?? "DRIVING",
+      });
+      if (!directionsRendererRef.current) {
+        directionsRendererRef.current = new maps.DirectionsRenderer({
+          map,
+          suppressMarkers: false,
+          polylineOptions: {
+            strokeColor: "#1f3d2d",
+            strokeOpacity: 0.92,
+            strokeWeight: 5,
+          },
+        });
+      } else {
+        directionsRendererRef.current.setMap(map);
+      }
+      directionsRendererRef.current.setDirections(result);
+      const leg = result.routes?.[0]?.legs?.[0];
+      setRouteSummary({
+        distance: leg?.distance?.text || "N/A",
+        duration: leg?.duration?.text || "N/A",
+      });
+    } catch {
+      setDistanceError("Failed to load route. Try another location.");
+      setRouteSummary(null);
+    } finally {
+      setRouteLoading(false);
+    }
+  };
+
+  const submitVisitBooking = async () => {
+    if (!activePlot) return;
+    if (!visitName.trim() || !visitPhone.trim() || !visitDate) {
+      setVisitError("Name, phone and visit date/time are required.");
+      return;
+    }
+    setVisitSaving(true);
+    setVisitError(null);
+    setVisitSuccess(null);
+    try {
+      await addDoc(collection(db, "visitBookings"), {
+        plotId: activePlot.id,
+        plotLabel: activePlot.label,
+        vendorName: activePlot.vendor,
+        vendorId: activePlot.vendorId ?? null,
+        portalId: activePlot.portalId ?? null,
+        requestedByName: visitName.trim(),
+        requestedByPhone: visitPhone.trim(),
+        preferredVisitAt: visitDate,
+        note: visitNote.trim(),
+        status: "requested",
+        createdAt: serverTimestamp(),
+      });
+      setVisitSuccess("Visit request submitted.");
+      setVisitBookingOpen(false);
+      setVisitName("");
+      setVisitPhone("");
+      setVisitDate("");
+      setVisitNote("");
+    } catch {
+      setVisitError("Failed to submit visit request. Try again.");
+    } finally {
+      setVisitSaving(false);
+    }
+  };
 
   const submitInquiry = async () => {
     if (!activePlot) return;
@@ -228,12 +356,81 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
     setInquirySaving(true);
     setInquiryError(null);
     try {
+      let assignedAgentId = "";
+      let assignedAgentName = "";
+      if (activePlot.portalId) {
+        try {
+          const portalSnap = await getDocs(
+            query(
+              collection(db, "vendorPortals"),
+              where("__name__", "==", activePlot.portalId)
+            )
+          );
+          if (!portalSnap.empty) {
+            const portal = portalSnap.docs[0].data() as {
+              members?: Record<
+                string,
+                { role?: string; name?: string; email?: string }
+              >;
+            };
+            const agents = Object.entries(portal.members ?? {})
+              .filter(([, member]) => member?.role === "agent")
+              .map(([id, member]) => ({
+                id,
+                name: member?.name || member?.email || "Agent",
+              }));
+            if (agents.length) {
+              const inquiriesSnap = await getDocs(
+                query(
+                  collection(db, "inquiries"),
+                  where("portalId", "==", activePlot.portalId)
+                )
+              );
+              const assignmentCounts = new Map<string, number>(
+                agents.map((agent) => [agent.id, 0])
+              );
+              inquiriesSnap.forEach((docSnap) => {
+                const data = docSnap.data() as {
+                  status?: "new" | "responded";
+                  assignedAgentId?: string;
+                };
+                if (data.status === "responded") return;
+                if (!data.assignedAgentId) return;
+                if (!assignmentCounts.has(data.assignedAgentId)) return;
+                assignmentCounts.set(
+                  data.assignedAgentId,
+                  (assignmentCounts.get(data.assignedAgentId) ?? 0) + 1
+                );
+              });
+              const minimumLoad = Math.min(
+                ...Array.from(assignmentCounts.values())
+              );
+              const eligibleAgents = agents.filter(
+                (agent) =>
+                  (assignmentCounts.get(agent.id) ?? 0) === minimumLoad
+              );
+              const selected =
+                eligibleAgents[
+                  Math.floor(Math.random() * eligibleAgents.length)
+                ];
+              assignedAgentId = selected.id;
+              assignedAgentName = selected.name;
+            }
+          }
+        } catch {
+          // Fallback assignment is handled from the vendor dashboard if needed.
+        }
+      }
       await addDoc(collection(db, "inquiries"), {
         plotId: activePlot.id,
         plotLabel: activePlot.label,
         vendorName: activePlot.vendor,
         vendorType: activePlot.vendorType,
         vendorId: activePlot.vendorId,
+        portalId: activePlot.portalId ?? null,
+        assignedAgentId,
+        assignedAgentName,
+        ...(assignedAgentId ? { assignedAt: serverTimestamp() } : {}),
         buyerName: inquiryName,
         buyerPhone: inquiryPhone,
         preferredContact: inquiryMethod,
@@ -251,6 +448,57 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
       setInquirySaving(false);
     }
   };
+
+  useEffect(() => {
+    setDistanceResults([]);
+    setDistanceError(null);
+    setDistanceTargetName(null);
+    setDistanceTargetCenter(null);
+    setDistanceKm(null);
+    setRouteSummary(null);
+    directionsRendererRef.current?.setMap(null);
+    directionsRendererRef.current = null;
+    setVisitBookingOpen(false);
+    setVisitError(null);
+    setVisitSuccess(null);
+  }, [activePlot?.id]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const rawFavorites = window.localStorage.getItem("favoritePlotIds");
+      const rawRecent = window.localStorage.getItem("recentPlotIds");
+      if (rawFavorites) {
+        const parsed = JSON.parse(rawFavorites) as string[];
+        if (Array.isArray(parsed)) setFavoritePlotIds(parsed);
+      }
+      if (rawRecent) {
+        const parsed = JSON.parse(rawRecent) as string[];
+        if (Array.isArray(parsed)) setRecentPlotIds(parsed);
+      }
+    } catch {
+      // ignore parse errors
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!activePlot) return;
+    setRecentPlotIds((current) => {
+      const next = [activePlot.id, ...current.filter((id) => id !== activePlot.id)].slice(
+        0,
+        8
+      );
+      if (typeof window !== "undefined") {
+        window.localStorage.setItem("recentPlotIds", JSON.stringify(next));
+      }
+      return next;
+    });
+  }, [activePlot]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("favoritePlotIds", JSON.stringify(favoritePlotIds));
+  }, [favoritePlotIds]);
 
   useEffect(() => {
     if (!activePlot || !mutationFormOpen) {
@@ -341,184 +589,247 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
   useEffect(() => {
     if (!containerRef.current || mapRef.current) return;
 
-    const baseStyleUrl: string | StyleSpecification = hasSatellite
-      ? mapboxSatelliteStyle
-      : fallbackStyleUrl;
-
-    const map = new maplibregl.Map({
-      container: containerRef.current,
-      style: baseStyleUrl,
-      center: [36.668, -1.248],
-      zoom: 12.6,
-      pitch: 0,
-      bearing: 0,
-    });
-
-    mapRef.current = map;
-    map.addControl(new maplibregl.NavigationControl(), "bottom-right");
-
-    const addPlotLayers = () => {
-      if (!map.getSource("plots")) {
-        map.addSource("plots", {
-          type: "geojson",
-          data: geojson,
+    let cancelled = false;
+    loadGoogleMapsApi()
+      .then((maps) => {
+        if (cancelled || !containerRef.current || mapRef.current) return;
+        mapsApiRef.current = maps;
+        mapRef.current = new maps.Map(containerRef.current, {
+          center: { lat: -1.248, lng: 36.668 },
+          zoom: 12.6,
+          mapId: googleMapId,
+          mapTypeId: "hybrid",
+          tilt: 0,
+          heading: 0,
+          mapTypeControl: false,
+          streetViewControl: false,
+          fullscreenControl: false,
+          zoomControl: true,
+          gestureHandling: "greedy",
+          scrollwheel: true,
         });
-      }
-
-      if (!map.getLayer("plot-fill")) {
-        map.addLayer({
-          id: "plot-fill",
-          type: "fill",
-          source: "plots",
-          paint: {
-            "fill-color": [
-              "case",
-              ["==", ["get", "sold"], true],
-              "#d9d0c7",
-              "#c77d4b",
-            ],
-            "fill-opacity": 0.28,
-          },
-        });
-      }
-
-      if (!map.getLayer("plot-line")) {
-        map.addLayer({
-          id: "plot-line",
-          type: "line",
-          source: "plots",
-          paint: {
-            "line-color": [
-              "case",
-              ["==", ["get", "sold"], true],
-              "#9a8f87",
-              "#1f3d2d",
-            ],
-            "line-width": 2,
-          },
-        });
-      }
-    };
-
-    const addMarkers = () => {
-      markerRef.current.forEach((marker) => marker.remove());
-      markerRef.current = [];
-      visiblePlots.forEach((plot) => {
-        const marker = document.createElement("div");
-        marker.style.background = plot.isSold
-          ? "rgba(217,208,199,0.9)"
-          : "rgba(255,255,255,0.92)";
-        marker.style.border = plot.isSold
-          ? "1px solid rgba(185,176,168,0.9)"
-          : "1px solid rgba(234,223,206,0.9)";
-        marker.style.borderRadius = "999px";
-        marker.style.padding = "6px 10px";
-        marker.style.fontSize = "12px";
-        marker.style.fontWeight = "600";
-        marker.style.color = plot.isSold ? "#6b6058" : "#14110f";
-        marker.style.boxShadow = "0 8px 16px rgba(20,17,15,0.18)";
-        marker.innerText = plot.price;
-        marker.style.cursor = "pointer";
-        marker.addEventListener("click", () => setActivePlot(plot));
-        const mapMarker = new maplibregl.Marker({
-          element: marker,
-          anchor: "bottom",
-        })
-          .setLngLat(plot.center)
-          .addTo(map);
-        markerRef.current.push(mapMarker);
+        setMapReady(true);
+      })
+      .catch(() => {
+        setSearchError("Google Maps failed to load.");
       });
-    };
-
-    const handleResize = () => map.resize();
-    map.on("load", () => {
-      addPlotLayers();
-      addMarkers();
-      map.resize();
-    });
-
-    map.on("style.load", () => {
-      addPlotLayers();
-    });
-
-    map.on("click", "plot-fill", (event) => {
-      const feature = event.features?.[0];
-      const id = feature?.properties?.id as string | undefined;
-      if (!id) return;
-      const plot = plots.find((item) => item.id === id);
-      if (plot) {
-        setActivePlot(plot);
-      }
-    });
-
-    window.addEventListener("resize", handleResize);
 
     return () => {
-      window.removeEventListener("resize", handleResize);
-      map.remove();
+      cancelled = true;
+      markerRef.current.forEach((clear) => clear());
+      markerRef.current = [];
+      polygonRef.current.forEach((polygon) => polygon.setMap(null));
+      polygonRef.current = [];
+      essentialMarkerRef.current.forEach((clear) => clear());
+      essentialMarkerRef.current = [];
+      directionsRendererRef.current?.setMap(null);
+      directionsRendererRef.current = null;
       mapRef.current = null;
+      setMapReady(false);
     };
-  }, [geojson, plots, visiblePlots]);
+  }, [googleMapId]);
 
   useEffect(() => {
     if (!mapRef.current) return;
-    const source = mapRef.current.getSource(
-      "plots"
-    ) as maplibregl.GeoJSONSource | null;
-    if (source) {
-      source.setData(geojson);
-    }
+    mapRef.current.setMapTypeId?.(showLandmarks ? "hybrid" : "satellite");
+  }, [showLandmarks]);
 
-    markerRef.current.forEach((marker) => marker.remove());
+  useEffect(() => {
+    if (!mapReady || hasCenteredToUserRef.current) return;
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      hasCenteredToUserRef.current = true;
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      (position) => {
+        if (!mapRef.current || hasCenteredToUserRef.current) return;
+        mapRef.current.setCenter({
+          lat: position.coords.latitude,
+          lng: position.coords.longitude,
+        });
+        mapRef.current.setZoom(13);
+        hasCenteredToUserRef.current = true;
+      },
+      () => {
+        hasCenteredToUserRef.current = true;
+      },
+      { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
+    );
+  }, [mapReady]);
+
+  useEffect(() => {
+    const maps = mapsApiRef.current;
+    const map = mapRef.current;
+    if (!maps || !map) return;
+
+    essentialMarkerRef.current.forEach((clear) => clear());
+    essentialMarkerRef.current = [];
+
+    const plot = activePlot;
+    if (!plot) return;
+
+    const enabled = (Object.keys(essentialEnabled) as EssentialLayerKey[]).filter(
+      (key) => essentialEnabled[key]
+    );
+    if (!enabled.length) return;
+    if (!maps.places?.PlacesService) return;
+
+    const service = new maps.places.PlacesService(map);
+    enabled.forEach((key) => {
+      const layer = essentialLayerConfig[key];
+      service.nearbySearch(
+        {
+          location: { lat: plot.center[1], lng: plot.center[0] },
+          radius: 5000,
+          keyword: layer.keyword,
+        },
+        (results, status) => {
+          if (!results || !results.length) return;
+          const okStatus = maps.places?.PlacesServiceStatus?.OK ?? "OK";
+          if (status !== okStatus) return;
+          results.slice(0, 8).forEach((item) => {
+            const lat = item.geometry?.location?.lat();
+            const lng = item.geometry?.location?.lng();
+            if (typeof lat !== "number" || typeof lng !== "number") return;
+            const marker = new maps.Marker({
+              map,
+              position: { lat, lng },
+              title: `${item.name || layer.label}${item.vicinity ? ` - ${item.vicinity}` : ""}`,
+              label: {
+                text: layer.label.charAt(0),
+                color: "#ffffff",
+                fontSize: "10px",
+                fontWeight: "700",
+              },
+              icon: {
+                path: maps.SymbolPath.CIRCLE,
+                scale: 8,
+                fillColor: layer.color,
+                fillOpacity: 0.95,
+                strokeColor: "#ffffff",
+                strokeWeight: 1.5,
+              } as unknown,
+            });
+            essentialMarkerRef.current.push(() => marker.setMap(null));
+          });
+        }
+      );
+    });
+  }, [activePlot, essentialEnabled, essentialLayerConfig]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const maps = mapsApiRef.current;
+    if (!map || !maps) return;
+
+    markerRef.current.forEach((clear) => clear());
     markerRef.current = [];
+    polygonRef.current.forEach((polygon) => {
+      maps.event.clearInstanceListeners(polygon);
+      polygon.setMap(null);
+    });
+    polygonRef.current = [];
+
     visiblePlots.forEach((plot) => {
-      const marker = document.createElement("div");
-      marker.style.background = plot.isSold
-        ? "rgba(217,208,199,0.9)"
-        : "rgba(255,255,255,0.92)";
-      marker.style.border = plot.isSold
-        ? "1px solid rgba(185,176,168,0.9)"
-        : "1px solid rgba(234,223,206,0.9)";
-      marker.style.borderRadius = "999px";
-      marker.style.padding = "6px 10px";
-      marker.style.fontSize = "12px";
-      marker.style.fontWeight = "600";
-      marker.style.color = plot.isSold ? "#6b6058" : "#14110f";
-      marker.style.boxShadow = "0 8px 16px rgba(20,17,15,0.18)";
-      marker.innerText = plot.price;
-      marker.style.cursor = "pointer";
-      marker.addEventListener("click", () => setActivePlot(plot));
-      const mapMarker = new maplibregl.Marker({
-        element: marker,
-        anchor: "bottom",
-      }).setLngLat(plot.center);
-      if (mapRef.current) {
-        mapMarker.addTo(mapRef.current);
-        markerRef.current.push(mapMarker);
+      const position = { lat: plot.center[1], lng: plot.center[0] };
+      const compactPrice = compactPriceLabel(plot.price);
+      if (maps.marker?.AdvancedMarkerElement) {
+        const card = document.createElement("button");
+        card.type = "button";
+        card.textContent = compactPrice;
+        card.style.background = "rgba(255,255,255,0.98)";
+        card.style.border = "1px solid rgba(234,223,206,0.95)";
+        card.style.borderRadius = "999px";
+        card.style.padding = "7px 11px";
+        card.style.fontSize = "13px";
+        card.style.fontWeight = "700";
+        card.style.fontFamily = "\"Poppins\", \"Inter\", \"Segoe UI\", Arial, sans-serif";
+        card.style.letterSpacing = "0.01em";
+        card.style.color = plot.isSold ? "#6b6058" : "#14110f";
+        card.style.boxShadow = "0 8px 16px rgba(20,17,15,0.18)";
+        card.style.cursor = "pointer";
+        card.style.whiteSpace = "nowrap";
+        card.addEventListener("click", () => setActivePlot(plot));
+
+        const marker = new maps.marker.AdvancedMarkerElement({
+          map,
+          position,
+          content: card,
+          title: `${plot.label} ${plot.price}`,
+          gmpClickable: true,
+        });
+        markerRef.current.push(() => {
+          marker.map = null;
+          card.remove();
+        });
+      } else {
+        const marker = new maps.Marker({
+          map,
+          position,
+          label: {
+            text: compactPrice,
+            color: plot.isSold ? "#5c524c" : "#101010",
+            fontSize: "13px",
+            fontWeight: "700",
+          },
+        });
+        maps.event.addListener(marker, "click", () => setActivePlot(plot));
+        markerRef.current.push(() => marker.setMap(null));
+      }
+
+      if ((plot.polygon?.length ?? 0) < 3) return;
+      const paths = (plot.polygon ?? []).map(([lng, lat]) => ({ lat, lng }));
+      const polygon = new maps.Polygon({
+        map,
+        paths,
+        strokeColor: plot.isSold ? "#9a8f87" : "#1f3d2d",
+        strokeOpacity: 0.9,
+        strokeWeight: 2,
+        fillColor: plot.isSold ? "#d9d0c7" : "#c77d4b",
+        fillOpacity: 0.28,
+        clickable: true,
+      });
+      maps.event.addListener(polygon, "click", () => setActivePlot(plot));
+      polygonRef.current.push(polygon);
+    });
+  }, [plots, visiblePlots, mapReady]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const maps = mapsApiRef.current;
+    if (!map || !maps) return;
+    if (!activePlot) return;
+    const availablePlots = visiblePlots.filter((plot) => !plot.isSold);
+    if (!availablePlots.length) return;
+    const bounds = new maps.LatLngBounds();
+    availablePlots.forEach((plot) => {
+      if ((plot.polygon?.length ?? 0) >= 3) {
+        plot.polygon?.forEach(([lng, lat]) => bounds.extend({ lat, lng }));
+      } else {
+        bounds.extend({ lat: plot.center[1], lng: plot.center[0] });
       }
     });
-  }, [geojson, plots, visiblePlots]);
+    map.fitBounds(bounds, 60);
+  }, [activePlot, visiblePlots, mapReady]);
 
   useEffect(() => {
     if (!mapRef.current) return;
-    mapRef.current.easeTo({
-      pitch: is3D ? 50 : 0,
-      bearing: is3D ? -12 : 0,
-      duration: 600,
-    });
+    mapRef.current.setTilt?.(is3D ? 45 : 0);
+    mapRef.current.setHeading?.(is3D ? -12 : 0);
   }, [is3D]);
-
-  useEffect(() => {
-    if (!mapRef.current) return;
-    const baseStyleUrl: string | StyleSpecification = hasSatellite
-      ? mapboxSatelliteStyle
-      : fallbackStyleUrl;
-    mapRef.current.setStyle(baseStyleUrl);
-  }, [hasSatellite, mapboxSatelliteStyle, fallbackStyleUrl]);
 
   return (
     <div className="relative h-[55vh] min-h-[360px] w-full overflow-hidden rounded-[20px] border border-[#eadfce] bg-[#e8dccb] shadow-[0_30px_70px_-45px_rgba(20,17,15,0.55)] sm:h-[65vh] sm:min-h-[520px] md:h-[720px] md:rounded-[32px]">
       <div className="absolute left-3 top-3 z-10 flex flex-wrap gap-2 rounded-full bg-white/90 px-2 py-2 text-[10px] font-semibold text-[#1f3d2d] shadow-sm backdrop-blur sm:left-5 sm:top-5 sm:px-3 sm:py-2 sm:text-xs">
+        <button
+          type="button"
+          onClick={() => setShowLandmarks((value) => !value)}
+          className={`rounded-full px-3 py-1 transition ${
+            showLandmarks ? "bg-[#c77d4b] text-white" : "text-[#1f3d2d]"
+          }`}
+        >
+          {showLandmarks ? "Landmarks on" : "Landmarks off"}
+        </button>
         <button
           type="button"
           onClick={() => setIs3D((value) => !value)}
@@ -528,9 +839,6 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
         >
           {is3D ? "3D view" : "2D view"}
         </button>
-        <span className="rounded-full bg-[#c77d4b] px-3 py-1 text-white">
-          Satellite
-        </span>
       </div>
       <div className="absolute right-3 top-3 z-10 w-[180px] rounded-2xl border border-[#eadfce] bg-white/95 p-2 text-[10px] shadow-sm backdrop-blur sm:right-5 sm:top-5 sm:w-[240px] sm:text-[11px]">
         <div
@@ -551,7 +859,7 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
           <button
             type="button"
             onClick={runSearch}
-            disabled={!mapboxToken || searchLoading}
+            disabled={!searchQuery.trim() || searchLoading}
             className="rounded-full bg-[#1f3d2d] px-3 py-2 text-[10px] font-semibold text-white disabled:opacity-60"
           >
             {searchLoading ? "..." : "Go"}
@@ -575,11 +883,11 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
                 type="button"
                 onClick={() => {
                   setSearchResults([]);
-                  mapRef.current?.flyTo({
-                    center: result.center,
-                    zoom: 16,
-                    duration: 800,
+                  mapRef.current?.setCenter({
+                    lat: result.center[1],
+                    lng: result.center[0],
                   });
+                  mapRef.current?.setZoom(16);
                 }}
                 className="block w-full border-b border-[#f1e6d7] px-3 py-2 text-left text-[10px] text-[#5a4a44] hover:bg-[#fbf8f3]"
               >
@@ -588,16 +896,92 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
             ))}
           </div>
         )}
-        {!mapboxToken && (
-          <p className="mt-2 text-[10px] text-[#7a5f54]">
-            Add Mapbox token to search.
-          </p>
+        <p className="mt-2 text-[10px] text-[#7a5f54]">
+          Search uses Google Maps geocoding.
+        </p>
+        {(favoritePlots.length > 0 || recentPlots.length > 0) && (
+          <div className="mt-2 space-y-2 text-[10px]">
+            {favoritePlots.length > 0 && (
+              <div>
+                <p className="text-[#7a5f54]">Favorites</p>
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {favoritePlots.slice(0, 4).map((plot) => (
+                    <button
+                      key={`fav-${plot.id}`}
+                      type="button"
+                      onClick={() => {
+                        setActivePlot(plot);
+                        mapRef.current?.setCenter({
+                          lat: plot.center[1],
+                          lng: plot.center[0],
+                        });
+                        mapRef.current?.setZoom(16);
+                      }}
+                      className="rounded-full border border-[#eadfce] bg-white px-2 py-1 text-[10px] text-[#5a4a44]"
+                    >
+                      {plot.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+            {recentPlots.length > 0 && (
+              <div>
+                <p className="text-[#7a5f54]">Recently viewed</p>
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {recentPlots.map((plot) => (
+                    <button
+                      key={`recent-${plot.id}`}
+                      type="button"
+                      onClick={() => {
+                        setActivePlot(plot);
+                        mapRef.current?.setCenter({
+                          lat: plot.center[1],
+                          lng: plot.center[0],
+                        });
+                        mapRef.current?.setZoom(16);
+                      }}
+                      className="rounded-full border border-[#eadfce] bg-white px-2 py-1 text-[10px] text-[#5a4a44]"
+                    >
+                      {plot.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+        {activePlot && (
+          <div className="mt-2 space-y-1 text-[10px]">
+            <p className="text-[#7a5f54]">Nearby essentials</p>
+            <div className="flex flex-wrap gap-1">
+              {(Object.keys(essentialLayerConfig) as EssentialLayerKey[]).map((key) => (
+                <button
+                  key={`layer-${key}`}
+                  type="button"
+                  onClick={() =>
+                    setEssentialEnabled((current) => ({
+                      ...current,
+                      [key]: !current[key],
+                    }))
+                  }
+                  className={`rounded-full px-2 py-1 ${
+                    essentialEnabled[key]
+                      ? "bg-[#1f3d2d] text-white"
+                      : "border border-[#eadfce] bg-white text-[#5a4a44]"
+                  }`}
+                >
+                  {essentialLayerConfig[key].label}
+                </button>
+              ))}
+            </div>
+          </div>
         )}
       </div>
       <div ref={containerRef} className="h-full w-full" />
 
       {activePlot && (
-        <div className="absolute inset-x-3 bottom-3 z-20 w-auto max-h-[70vh] overflow-y-auto rounded-3xl border border-[#eadfce] bg-white/95 p-4 text-xs shadow-[0_20px_60px_-40px_rgba(20,17,15,0.6)] backdrop-blur transition-transform duration-300 ease-out animate-slide-up sm:inset-x-auto sm:bottom-auto sm:right-6 sm:top-6 sm:w-[260px] sm:max-h-none sm:overflow-visible">
+        <div className="absolute inset-x-3 bottom-3 z-20 w-auto max-h-[calc(100%-1.5rem)] overflow-y-auto rounded-3xl border border-[#eadfce] bg-white/95 p-4 text-xs shadow-[0_20px_60px_-40px_rgba(20,17,15,0.6)] backdrop-blur transition-transform duration-300 ease-out animate-slide-up sm:inset-x-auto sm:bottom-6 sm:right-6 sm:top-6 sm:w-[280px] sm:max-h-[calc(100%-3rem)] sm:overflow-y-auto">
           <div className="flex items-start justify-between">
             <div>
               <p className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
@@ -617,6 +1001,21 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
                 setInquiryOpen(false);
                 setGalleryOpen(false);
                 setMutationFormOpen(false);
+                setDistanceResults([]);
+                setDistanceError(null);
+                setDistanceTargetName(null);
+                setDistanceTargetCenter(null);
+                setDistanceKm(null);
+                setRouteSummary(null);
+                directionsRendererRef.current?.setMap(null);
+                directionsRendererRef.current = null;
+                setVisitBookingOpen(false);
+                setVisitName("");
+                setVisitPhone("");
+                setVisitDate("");
+                setVisitNote("");
+                setVisitError(null);
+                setVisitSuccess(null);
               }}
               className="rounded-full border border-[#eadfce] px-2 py-1 text-[10px] text-[#5a4a44]"
             >
@@ -644,6 +1043,175 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
                 Sold parcels: {activePlot.soldParcelIds?.join(", ")}
               </p>
             )}
+          </div>
+          <div className="mt-2 grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() =>
+                setFavoritePlotIds((current) =>
+                  current.includes(activePlot.id)
+                    ? current.filter((id) => id !== activePlot.id)
+                    : [activePlot.id, ...current].slice(0, 20)
+                )
+              }
+              className={`rounded-full px-3 py-2 text-[11px] font-semibold ${
+                favoritePlotIds.includes(activePlot.id)
+                  ? "bg-[#c77d4b] text-white"
+                  : "border border-[#1f3d2d]/30 text-[#1f3d2d]"
+              }`}
+            >
+              {favoritePlotIds.includes(activePlot.id)
+                ? "Saved to favorites"
+                : "Add to favorites"}
+            </button>
+            <button
+              type="button"
+              onClick={() => setVisitBookingOpen((current) => !current)}
+              className="rounded-full border border-[#1f3d2d]/30 px-3 py-2 text-[11px] font-semibold text-[#1f3d2d]"
+            >
+              {visitBookingOpen ? "Close visit form" : "Request site visit"}
+            </button>
+          </div>
+          {visitBookingOpen && (
+            <div className="mt-2 rounded-2xl border border-[#eadfce] bg-white p-3">
+              <p className="text-[10px] uppercase tracking-[0.2em] text-[#a67047]">
+                Visit booking
+              </p>
+              <div className="mt-2 space-y-2">
+                <input
+                  type="text"
+                  value={visitName}
+                  onChange={(event) => setVisitName(event.target.value)}
+                  placeholder="Your name"
+                  className="w-full rounded-2xl border border-[#eadfce] px-3 py-2 text-[11px]"
+                />
+                <input
+                  type="tel"
+                  value={visitPhone}
+                  onChange={(event) => setVisitPhone(event.target.value)}
+                  placeholder="Phone number"
+                  className="w-full rounded-2xl border border-[#eadfce] px-3 py-2 text-[11px]"
+                />
+                <input
+                  type="datetime-local"
+                  value={visitDate}
+                  onChange={(event) => setVisitDate(event.target.value)}
+                  className="w-full rounded-2xl border border-[#eadfce] px-3 py-2 text-[11px]"
+                />
+                <textarea
+                  rows={2}
+                  value={visitNote}
+                  onChange={(event) => setVisitNote(event.target.value)}
+                  placeholder="Any note for the agent"
+                  className="w-full rounded-2xl border border-[#eadfce] px-3 py-2 text-[11px]"
+                />
+                {visitError && <p className="text-[10px] text-[#b3261e]">{visitError}</p>}
+                {visitSuccess && (
+                  <p className="text-[10px] text-[#1f3d2d]">{visitSuccess}</p>
+                )}
+                <button
+                  type="button"
+                  onClick={submitVisitBooking}
+                  disabled={visitSaving}
+                  className="w-full rounded-full bg-[#1f3d2d] px-3 py-2 text-[11px] font-semibold text-white disabled:opacity-60"
+                >
+                  {visitSaving ? "Submitting..." : "Submit visit request"}
+                </button>
+              </div>
+            </div>
+          )}
+          <div className="mt-3 rounded-2xl border border-[#eadfce] bg-white p-3">
+            <p className="text-[10px] uppercase tracking-[0.2em] text-[#a67047]">
+              Distance checker
+            </p>
+            <div className="mt-2 flex items-center gap-2">
+              <input
+                value={distanceQuery}
+                onChange={(event) => setDistanceQuery(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    runDistanceSearch();
+                  }
+                }}
+                placeholder="Search a location"
+                className="w-full rounded-full border border-[#eadfce] bg-white px-3 py-2 text-[11px] text-[#14110f]"
+              />
+              <button
+                type="button"
+                onClick={runDistanceSearch}
+                disabled={!distanceQuery.trim() || distanceLoading}
+                className="rounded-full bg-[#1f3d2d] px-3 py-2 text-[10px] font-semibold text-white disabled:opacity-60"
+              >
+                {distanceLoading ? "..." : "Go"}
+              </button>
+            </div>
+            {distanceError && (
+              <p className="mt-2 text-[10px] text-[#b3261e]">{distanceError}</p>
+            )}
+            {distanceResults.length > 0 && (
+              <div className="mt-2 max-h-28 overflow-auto rounded-xl border border-[#eadfce] bg-white">
+                {distanceResults.map((result) => (
+                  <button
+                    key={result.id}
+                    type="button"
+                    onClick={() => {
+                      setDistanceResults([]);
+                      setDistanceTargetName(result.place_name);
+                      setDistanceTargetCenter(result.center);
+                      const km = distanceBetweenKm(activePlot.center, result.center);
+                      setDistanceKm(km);
+                      drawRouteToPlot(result.center, activePlot.center);
+                    }}
+                    className="block w-full border-b border-[#f1e6d7] px-3 py-2 text-left text-[10px] text-[#5a4a44] hover:bg-[#fbf8f3]"
+                  >
+                    {result.place_name}
+                  </button>
+                ))}
+              </div>
+            )}
+            {distanceKm !== null && distanceTargetName && (
+              <p className="mt-2 text-[11px] text-[#1f3d2d]">
+                Distance to {distanceTargetName}:{" "}
+                <span className="font-semibold">{formatDistance(distanceKm)}</span>
+              </p>
+            )}
+            {routeLoading && (
+              <p className="mt-1 text-[10px] text-[#7a5f54]">Loading route...</p>
+            )}
+            {routeSummary && (
+              <p className="mt-1 text-[10px] text-[#5a4a44]">
+                Drive route: {routeSummary.distance} ({routeSummary.duration})
+              </p>
+            )}
+            {distanceTargetCenter && (
+              <button
+                type="button"
+                onClick={() => drawRouteToPlot(distanceTargetCenter, activePlot.center)}
+                className="mt-2 rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#1f3d2d]"
+              >
+                Refresh route
+              </button>
+            )}
+          </div>
+          <div className="mt-2 rounded-2xl border border-[#eadfce] bg-white p-3">
+            <button
+              type="button"
+              onClick={() => {
+                const destination = `${activePlot.center[1]},${activePlot.center[0]}`;
+                const url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(
+                  destination
+                )}`;
+                window.open(url, "_blank", "noopener,noreferrer");
+              }}
+              className="w-full rounded-full border border-[#1f3d2d]/30 px-3 py-2 text-[11px] font-semibold text-[#1f3d2d]"
+            >
+              Share to Maps
+            </button>
+            <p className="mt-2 text-[10px] text-[#7a5f54]">
+              Share parcel location to Google Maps to get directions for accessing
+              this parcel.
+            </p>
           </div>
           {!inquiryOpen ? (
             <>
@@ -833,8 +1401,8 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
         </div>
       )}
       {mutationFormOpen && activePlot?.mutationForm?.url && (
-        <div className="absolute inset-0 z-30 flex items-center justify-center bg-black/40 px-4 py-6">
-          <div className="w-full max-w-3xl rounded-3xl border border-[#eadfce] bg-[#fbf8f3] p-6 shadow-[0_30px_70px_-40px_rgba(20,17,15,0.6)]">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 px-3 py-3 sm:px-4 sm:py-6">
+          <div className="w-full max-w-3xl max-h-[92vh] overflow-y-auto rounded-3xl border border-[#eadfce] bg-[#fbf8f3] p-4 shadow-[0_30px_70px_-40px_rgba(20,17,15,0.6)] sm:p-6">
             <div className="flex items-center justify-between">
               <p className="text-sm font-semibold text-[#14110f]">
                 Mutation form
@@ -866,7 +1434,7 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
                   </span>
                 )}
             </div>
-            <div className="mt-4 h-[65vh] overflow-hidden rounded-2xl border border-[#eadfce] bg-white">
+            <div className="mt-4 h-[58vh] overflow-hidden rounded-2xl border border-[#eadfce] bg-white sm:h-[65vh]">
               {mutationFormIsPdf ? (
                 <iframe
                   src={activePlot.mutationForm.url}

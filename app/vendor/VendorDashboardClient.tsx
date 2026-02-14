@@ -3,8 +3,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { onAuthStateChanged } from "firebase/auth";
-import maplibregl from "maplibre-gl";
-import "maplibre-gl/dist/maplibre-gl.css";
 import {
   addDoc,
   arrayRemove,
@@ -35,6 +33,14 @@ import {
   query as dbQuery,
   limitToLast,
 } from "firebase/database";
+import {
+  type GoogleMapsApi,
+  type MapsEventListener,
+  type MapsMap,
+  type MapsMarker,
+  type MapsPolygon,
+  loadGoogleMapsApi,
+} from "../../lib/googleMapsLoader";
 
 type VendorPlot = {
   id: string;
@@ -101,7 +107,63 @@ type Inquiry = {
   phone: string;
   preferredContact: "Call" | "Text" | "WhatsApp";
   message: string;
-  status?: "new" | "responded";
+  status?: "new" | "responded" | "successful";
+  assignedAgentId?: string;
+  assignedAgentName?: string;
+  respondedById?: string;
+  respondedByName?: string;
+  respondedAt?: string;
+  assignedAt?: string;
+  successfulByName?: string;
+  successfulAt?: string;
+  nextFollowUpAt?: string;
+  progressLogs?: {
+    id: string;
+    kind:
+      | "call"
+      | "site_visit"
+      | "offer"
+      | "objection"
+      | "follow_up"
+      | "system";
+    note: string;
+    byName: string;
+    at: string;
+    nextFollowUpAt?: string;
+    channel?: "Call" | "WhatsApp" | "SMS" | "Email";
+  }[];
+  reminders?: {
+    id: string;
+    channel: "Call" | "WhatsApp" | "SMS" | "Email";
+    scheduledAt: string;
+    status: "scheduled" | "sent";
+    note?: string;
+    sentAt?: string;
+  }[];
+};
+
+type VisitRequest = {
+  id: string;
+  plotId: string;
+  plotLabel: string;
+  vendorName: string;
+  vendorId?: string | null;
+  portalId?: string | null;
+  requestedByName: string;
+  requestedByPhone: string;
+  preferredVisitAt: string;
+  note?: string;
+  status: "requested" | "visited";
+  createdAtLabel: string;
+  visitedByName?: string;
+  visitedAtLabel?: string;
+};
+
+type LeadAiSuggestion = {
+  nextSteps: string[];
+  messageSuggestions: string[];
+  riskLevel: "low" | "medium" | "high";
+  rationale: string;
 };
 
 const inquiriesSeed: Inquiry[] = [];
@@ -113,6 +175,79 @@ type MemberPermissions = {
   view_inquiries?: boolean;
   view_leads?: boolean;
   manage_members?: boolean;
+};
+type MemberRole = "admin" | "agent";
+
+const normalizeMemberRole = (role?: string): MemberRole =>
+  role === "admin" ? "admin" : "agent";
+
+const permissionsForRole = (role: MemberRole): MemberPermissions =>
+  role === "admin"
+    ? {
+        admin: true,
+        create_listings: true,
+        add_sales: true,
+        view_inquiries: true,
+        view_leads: true,
+        manage_members: true,
+      }
+    : {
+        admin: false,
+        create_listings: false,
+        add_sales: true,
+        view_inquiries: true,
+        view_leads: true,
+        manage_members: false,
+      };
+
+const BUSINESS_START_HOUR = 8;
+const BUSINESS_END_HOUR = 17;
+const INQUIRY_REASSIGN_AFTER_MS = 2 * 60 * 60 * 1000;
+const SLA_RESPONSE_REMINDER_MS = 60 * 60 * 1000;
+const SLA_UPDATE_REMINDER_MS = 4 * 60 * 60 * 1000;
+const SLA_UPDATE_REASSIGN_MS = 8 * 60 * 60 * 1000;
+
+const pickBalancedAgent = (
+  agents: { id: string; name: string; email: string }[],
+  inquiryPool: Inquiry[]
+) => {
+  if (!agents.length) return null;
+  const counts = new Map<string, number>(agents.map((agent) => [agent.id, 0]));
+  inquiryPool.forEach((item) => {
+    if ((item.status ?? "new") === "successful") return;
+    if (!item.assignedAgentId) return;
+    if (!counts.has(item.assignedAgentId)) return;
+    counts.set(item.assignedAgentId, (counts.get(item.assignedAgentId) ?? 0) + 1);
+  });
+  const minimumLoad = Math.min(...Array.from(counts.values()));
+  const eligible = agents.filter((agent) => (counts.get(agent.id) ?? 0) === minimumLoad);
+  return eligible[Math.floor(Math.random() * eligible.length)];
+};
+
+const isWithinBusinessHours = (date: Date) => {
+  const hour = date.getHours();
+  return hour >= BUSINESS_START_HOUR && hour < BUSINESS_END_HOUR;
+};
+
+const getBusinessElapsedMs = (start: Date, end: Date) => {
+  if (end <= start) return 0;
+  let total = 0;
+  let cursor = new Date(start);
+  while (cursor < end) {
+    const dayStart = new Date(cursor);
+    dayStart.setHours(BUSINESS_START_HOUR, 0, 0, 0);
+    const dayEnd = new Date(cursor);
+    dayEnd.setHours(BUSINESS_END_HOUR, 0, 0, 0);
+    const segmentStart = new Date(Math.max(cursor.getTime(), dayStart.getTime()));
+    const segmentEnd = new Date(Math.min(end.getTime(), dayEnd.getTime()));
+    if (segmentEnd > segmentStart) {
+      total += segmentEnd.getTime() - segmentStart.getTime();
+    }
+    cursor = new Date(cursor);
+    cursor.setDate(cursor.getDate() + 1);
+    cursor.setHours(0, 0, 0, 0);
+  }
+  return total;
 };
 
 type AnchorPayload = {
@@ -168,6 +303,8 @@ type SalesRecord = {
     url?: string;
   }[];
   fullyPaid?: boolean;
+  createdByAgentId?: string;
+  createdByAgentName?: string;
 };
 
 const initialPendingSales: SalesRecord[] = [];
@@ -196,6 +333,8 @@ const serializeSaleRecordForFirestore = (sale: SalesRecord) => {
     fullyPaid?: boolean;
     nextPaymentDate?: string;
     attachments?: { label: string; name: string; url?: string }[];
+    createdByAgentId?: string;
+    createdByAgentName?: string;
   } = {
     id: sale.id,
     parcelName: sale.parcelName,
@@ -230,6 +369,12 @@ const serializeSaleRecordForFirestore = (sale: SalesRecord) => {
       ...(attachment.url ? { url: attachment.url } : {}),
     }));
   }
+  if (sale.createdByAgentId) {
+    payload.createdByAgentId = sale.createdByAgentId;
+  }
+  if (sale.createdByAgentName) {
+    payload.createdByAgentName = sale.createdByAgentName;
+  }
   return payload;
 };
 
@@ -238,7 +383,14 @@ export default function VendorDashboard() {
   const searchParams = useSearchParams();
   const [newListingOpen, setNewListingOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<
-    "active" | "drafts" | "inquiries" | "leads" | "pending" | "sales" | "members"
+    | "active"
+    | "drafts"
+    | "inquiries"
+    | "leads"
+    | "visits"
+    | "pending"
+    | "sales"
+    | "members"
   >("active");
   const [plots, setPlots] = useState<VendorPlot[]>(initialPlots);
   const [soldListings, setSoldListings] = useState<SoldListing[]>(
@@ -249,6 +401,7 @@ export default function VendorDashboard() {
   const [pendingSalesRecords, setPendingSalesRecords] =
     useState<SalesRecord[]>(initialPendingSales);
   const [inquiries, setInquiries] = useState<Inquiry[]>(inquiriesSeed);
+  const [visitRequests, setVisitRequests] = useState<VisitRequest[]>([]);
   const [draftListings, setDraftListings] = useState<DraftListing[]>([]);
   const [draftId, setDraftId] = useState<string | null>(null);
   const [draftSaving, setDraftSaving] = useState(false);
@@ -259,6 +412,29 @@ export default function VendorDashboard() {
   const [selectedInquiryId, setSelectedInquiryId] = useState<string | null>(
     null
   );
+  const [selectedLeadId, setSelectedLeadId] = useState<string | null>(null);
+  const [leadAiSuggestions, setLeadAiSuggestions] = useState<
+    Record<string, LeadAiSuggestion>
+  >({});
+  const [leadAiLoading, setLeadAiLoading] = useState<Record<string, boolean>>({});
+  const [manualLeadName, setManualLeadName] = useState("");
+  const [manualLeadPhone, setManualLeadPhone] = useState("");
+  const [manualLeadParcel, setManualLeadParcel] = useState("");
+  const [manualLeadMessage, setManualLeadMessage] = useState("");
+  const [manualLeadAgentId, setManualLeadAgentId] = useState("");
+  const [manualLeadSaving, setManualLeadSaving] = useState(false);
+  const [manualLeadError, setManualLeadError] = useState<string | null>(null);
+  const [leadProgressNote, setLeadProgressNote] = useState("");
+  const [leadProgressKind, setLeadProgressKind] = useState<
+    "call" | "site_visit" | "offer" | "objection" | "follow_up"
+  >("follow_up");
+  const [leadNextFollowUpAt, setLeadNextFollowUpAt] = useState("");
+  const [leadReminderChannel, setLeadReminderChannel] = useState<
+    "Call" | "WhatsApp" | "SMS" | "Email"
+  >("WhatsApp");
+  const [leadReminderAt, setLeadReminderAt] = useState("");
+  const [leadProgressSaving, setLeadProgressSaving] = useState(false);
+  const [leadStatusSaving, setLeadStatusSaving] = useState(false);
   const [installmentDrafts, setInstallmentDrafts] = useState<
     Record<
       string,
@@ -376,21 +552,13 @@ export default function VendorDashboard() {
   const [locationStatus, setLocationStatus] = useState<string | null>(null);
   const [mapPreviewOpen, setMapPreviewOpen] = useState(false);
   const mapPreviewRef = useRef<HTMLDivElement | null>(null);
-  const mapPreviewInstanceRef = useRef<maplibregl.Map | null>(null);
-  const mapPreviewDragRef = useRef<{
-    parcelId: number | null;
-    lastLngLat: { lng: number; lat: number } | null;
-  }>({ parcelId: null, lastLngLat: null });
-  const mapPreviewDataRef = useRef<
-    {
-      id: number;
-      name: string;
-      polygon: [number, number][];
-    }[]
-  >([]);
+  const googleMapsApiRef = useRef<GoogleMapsApi | null>(null);
+  const mapPreviewInstanceRef = useRef<MapsMap | null>(null);
+  const mapPreviewPolygonRef = useRef<Map<number, MapsPolygon>>(new Map());
   const anchorMapRef = useRef<HTMLDivElement | null>(null);
-  const anchorMapInstanceRef = useRef<maplibregl.Map | null>(null);
-  const anchorMarkerRef = useRef<maplibregl.Marker | null>(null);
+  const anchorMapInstanceRef = useRef<MapsMap | null>(null);
+  const anchorMarkerRef = useRef<MapsMarker | null>(null);
+  const anchorMapClickListenerRef = useRef<MapsEventListener | null>(null);
   const anchorWatchRef = useRef<number | null>(null);
   const anchorDbRef = useRef<ReturnType<typeof dbRef> | null>(null);
   const headingRef = useRef<number | null>(null);
@@ -447,24 +615,16 @@ export default function VendorDashboard() {
       id: string;
       name: string;
       email: string;
-      role: "admin" | "member";
+      role: MemberRole;
       permissions: MemberPermissions;
     }[]
   >([]);
   const [memberEmail, setMemberEmail] = useState("");
-  const [memberRole, setMemberRole] = useState<"admin" | "member">("member");
-  const [memberPerms, setMemberPerms] = useState<MemberPermissions>({
-    create_listings: true,
-    add_sales: true,
-    view_inquiries: true,
-    view_leads: true,
-    manage_members: false,
-  });
+  const [memberRole, setMemberRole] = useState<MemberRole>("agent");
   const [memberSaving, setMemberSaving] = useState(false);
   const [memberError, setMemberError] = useState<string | null>(null);
   const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
-  const [editingRole, setEditingRole] = useState<"admin" | "member">("member");
-  const [editingPerms, setEditingPerms] = useState<MemberPermissions>({});
+  const [editingRole, setEditingRole] = useState<MemberRole>("agent");
   const [memberUpdating, setMemberUpdating] = useState(false);
   const [anchorSessionId, setAnchorSessionId] = useState<string | null>(null);
   const [anchorActive, setAnchorActive] = useState(false);
@@ -495,6 +655,7 @@ export default function VendorDashboard() {
     drafts: false,
     inquiries: false,
     leads: false,
+    visits: false,
     pending: false,
     sales: false,
     members: false,
@@ -504,77 +665,40 @@ export default function VendorDashboard() {
     drafts: "",
     inquiries: "",
     leads: "",
+    visits: "",
     pending: "",
     sales: "",
     members: "",
   });
-  const mapboxToken = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
-  const mapPreviewStyle = useMemo(
-    () =>
-      mapboxToken
-        ? ({
-            version: 8,
-            sources: {
-              "mapbox-satellite": {
-                type: "raster",
-                tiles: [
-                  `https://api.mapbox.com/v4/mapbox.satellite/{z}/{x}/{y}.jpg?access_token=${mapboxToken}`,
-                ],
-                tileSize: 256,
-                attribution: "© Mapbox © OpenStreetMap",
-              },
-              "mapbox-labels": {
-                type: "vector",
-                tiles: [
-                  `https://api.mapbox.com/v4/mapbox.mapbox-streets-v8/{z}/{x}/{y}.vector.pbf?access_token=${mapboxToken}`,
-                ],
-              },
-            },
-            glyphs: `https://api.mapbox.com/fonts/v1/mapbox/{fontstack}/{range}.pbf?access_token=${mapboxToken}`,
-            layers: [
-              {
-                id: "satellite",
-                type: "raster",
-                source: "mapbox-satellite",
-              },
-              {
-                id: "place-labels",
-                type: "symbol",
-                source: "mapbox-labels",
-                "source-layer": "place_label",
-                layout: {
-                  "text-field": ["coalesce", ["get", "name_en"], ["get", "name"]],
-                  "text-size": 12,
-                  "text-optional": true,
-                },
-                paint: {
-                  "text-color": "#1f3d2d",
-                  "text-halo-color": "#f7f3ea",
-                  "text-halo-width": 1,
-                },
-              },
-              {
-                id: "poi-labels",
-                type: "symbol",
-                source: "mapbox-labels",
-                "source-layer": "poi_label",
-                layout: {
-                  "text-field": ["coalesce", ["get", "name_en"], ["get", "name"]],
-                  "text-size": 11,
-                  "text-optional": true,
-                },
-                paint: {
-                  "text-color": "#3a2f2a",
-                  "text-halo-color": "#f7f3ea",
-                  "text-halo-width": 1,
-                },
-              },
-            ],
-          }) as const
-        : "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
-    [mapboxToken]
+  const googleMapId = process.env.NEXT_PUBLIC_GOOGLE_MAPS_MAP_ID || "DEMO_MAP_ID";
+  const reducedLabelStyles = useMemo(
+    () => [
+      {
+        featureType: "poi",
+        elementType: "labels",
+        stylers: [{ visibility: "off" }],
+      },
+      {
+        featureType: "transit",
+        elementType: "labels",
+        stylers: [{ visibility: "off" }],
+      },
+      {
+        featureType: "road.local",
+        elementType: "labels",
+        stylers: [{ visibility: "simplified" }],
+      },
+      {
+        elementType: "labels.text.fill",
+        stylers: [{ color: "#6a737d" }],
+      },
+      {
+        elementType: "labels.text.stroke",
+        stylers: [{ color: "#d2d7dd" }],
+      },
+    ],
+    []
   );
-
   const getActiveVendorId = useCallback(
     () => vendorId ?? auth.currentUser?.uid ?? null,
     [vendorId]
@@ -659,10 +783,10 @@ export default function VendorDashboard() {
         location: data.location || "Location not set",
       });
       const member = data.members?.[vendorId];
-      const permissions = member?.permissions ?? {};
-      const adminFlag = member?.role === "admin" || permissions.admin === true;
+      const role = normalizeMemberRole(member?.role);
+      const adminFlag = role === "admin";
       setIsPortalAdmin(adminFlag);
-      setMemberPermissions({ ...permissions, admin: adminFlag });
+      setMemberPermissions(permissionsForRole(role));
       if (!member) {
         setAccessDenied("Access denied. Contact admin for addition.");
       }
@@ -683,8 +807,8 @@ export default function VendorDashboard() {
             id,
             name: user?.name || "Member",
             email: user?.email || "",
-            role: (memberData?.role as "admin" | "member") ?? "member",
-            permissions: memberData?.permissions ?? {},
+            role: normalizeMemberRole(memberData?.role),
+            permissions: permissionsForRole(normalizeMemberRole(memberData?.role)),
           };
         });
         setPortalMembers(nextMembers);
@@ -779,6 +903,17 @@ export default function VendorDashboard() {
   const canViewInquiries = isPortalAdmin || memberPermissions.view_inquiries;
   const canViewLeads = isPortalAdmin || memberPermissions.view_leads;
   const canManageMembers = isPortalAdmin || memberPermissions.manage_members;
+  const assignableAgents = useMemo(
+    () =>
+      portalMembers
+        .filter((member) => member.role === "agent")
+        .map((member) => ({
+          id: member.id,
+          name: member.name,
+          email: member.email,
+        })),
+    [portalMembers]
+  );
 
   const denyAccess = (message: string) => {
     setAccessDenied(message);
@@ -787,7 +922,9 @@ export default function VendorDashboard() {
   const canAccessTab = (tabId: string) => {
     if (tabId === "inquiries") return canViewInquiries;
     if (tabId === "leads") return canViewLeads;
-    if (tabId === "active" || tabId === "drafts") return canCreateListings;
+    if (tabId === "visits") return canViewLeads;
+    if (tabId === "active") return true;
+    if (tabId === "drafts") return canCreateListings;
     if (tabId === "pending" || tabId === "sales") return canAddSales;
     if (tabId === "members") return canManageMembers;
     return true;
@@ -799,6 +936,7 @@ export default function VendorDashboard() {
       | "drafts"
       | "inquiries"
       | "leads"
+      | "visits"
       | "pending"
       | "sales"
       | "members"
@@ -810,12 +948,251 @@ export default function VendorDashboard() {
     setActiveTab(tabId);
   };
 
+  const logLeadProgress = async () => {
+    if (!selectedLeadId) return;
+    const note = leadProgressNote.trim();
+    if (!note) return;
+    setLeadProgressSaving(true);
+    const nowIso = new Date().toISOString();
+    const entry = {
+      id: `${Date.now()}`,
+      kind: leadProgressKind,
+      note,
+      byId: vendorId ?? "",
+      byName: userDisplayName ?? "Member",
+      at: nowIso,
+      ...(leadNextFollowUpAt ? { nextFollowUpAt: leadNextFollowUpAt } : {}),
+      channel: leadReminderChannel,
+    };
+    const reminder =
+      leadReminderAt.trim().length > 0
+        ? {
+            id: `${Date.now()}-reminder`,
+            channel: leadReminderChannel,
+            scheduledAt: leadReminderAt,
+            status: "scheduled" as const,
+            note,
+          }
+        : null;
+    try {
+      await updateDoc(doc(db, "inquiries", selectedLeadId), {
+        progressLogs: arrayUnion(entry),
+        ...(reminder ? { reminders: arrayUnion(reminder) } : {}),
+        ...(leadNextFollowUpAt ? { nextFollowUpAt: leadNextFollowUpAt } : {}),
+      });
+      setInquiries((current) =>
+        current.map((item) =>
+          item.id === selectedLeadId
+            ? {
+                ...item,
+                progressLogs: [
+                  ...(item.progressLogs ?? []),
+                  {
+                    id: entry.id,
+                    kind: entry.kind,
+                    note: entry.note,
+                    byName: entry.byName,
+                    at: new Date(entry.at).toLocaleString(),
+                    ...(entry.nextFollowUpAt
+                      ? { nextFollowUpAt: entry.nextFollowUpAt }
+                      : {}),
+                    channel: entry.channel,
+                  },
+                ],
+                ...(leadNextFollowUpAt ? { nextFollowUpAt: leadNextFollowUpAt } : {}),
+                ...(reminder
+                  ? {
+                      reminders: [
+                        ...(item.reminders ?? []),
+                        {
+                          id: reminder.id,
+                          channel: reminder.channel,
+                          scheduledAt: reminder.scheduledAt,
+                          status: "scheduled",
+                          note: reminder.note,
+                        },
+                      ],
+                    }
+                  : {}),
+              }
+            : item
+        )
+      );
+      setLeadProgressNote("");
+      setLeadNextFollowUpAt("");
+      setLeadReminderAt("");
+    } finally {
+      setLeadProgressSaving(false);
+    }
+  };
+
+  const markLeadSuccessful = async () => {
+    if (!selectedLeadId) return;
+    setLeadStatusSaving(true);
+    try {
+      await updateDoc(doc(db, "inquiries", selectedLeadId), {
+        status: "successful",
+        successfulById: vendorId ?? "",
+        successfulByName: userDisplayName ?? "Member",
+        successfulAt: serverTimestamp(),
+      });
+      setInquiries((current) =>
+        current.map((item) =>
+          item.id === selectedLeadId
+            ? {
+                ...item,
+                status: "successful",
+                successfulByName: userDisplayName ?? "Member",
+                successfulAt: new Date().toLocaleString(),
+              }
+            : item
+        )
+      );
+    } finally {
+      setLeadStatusSaving(false);
+    }
+  };
+
+  const markVisitAsVisited = async (visitId: string) => {
+    try {
+      await updateDoc(doc(db, "visitBookings", visitId), {
+        status: "visited",
+        visitedById: vendorId ?? "",
+        visitedByName: userDisplayName ?? "Member",
+        visitedAt: serverTimestamp(),
+      });
+      setVisitRequests((current) =>
+        current.map((item) =>
+          item.id === visitId
+            ? {
+                ...item,
+                status: "visited",
+                visitedByName: userDisplayName ?? "Member",
+                visitedAtLabel: new Date().toLocaleString(),
+              }
+            : item
+        )
+      );
+    } catch {
+      // keep UI responsive if visit status update fails
+    }
+  };
+
+  const generateLeadAiSuggestions = async (lead: Inquiry) => {
+    if (leadAiLoading[lead.id]) return;
+    setLeadAiLoading((current) => ({ ...current, [lead.id]: true }));
+    try {
+      const response = await fetch("/api/gemini/lead-suggestions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          lead: {
+            id: lead.id,
+            buyer: lead.buyer,
+            parcel: lead.parcel,
+            phone: lead.phone,
+            status: lead.status ?? "new",
+            assignedAgentName: lead.assignedAgentName,
+            respondedByName: lead.respondedByName,
+            progressLogs: lead.progressLogs ?? [],
+            message: lead.message,
+          },
+        }),
+      });
+      if (!response.ok) return;
+      const payload = (await response.json()) as LeadAiSuggestion;
+      if (!payload?.nextSteps?.length && !payload?.messageSuggestions?.length) return;
+      setLeadAiSuggestions((current) => ({ ...current, [lead.id]: payload }));
+    } finally {
+      setLeadAiLoading((current) => ({ ...current, [lead.id]: false }));
+    }
+  };
+
+  const createManualLead = async () => {
+    const buyerName = manualLeadName.trim();
+    const buyerPhone = manualLeadPhone.trim();
+    if (!buyerName || !buyerPhone) {
+      setManualLeadError("Lead name and phone are required.");
+      return;
+    }
+    const scopeId = getDashboardScopeId();
+    if (!scopeId) {
+      setManualLeadError("Unable to identify workspace scope.");
+      return;
+    }
+    setManualLeadSaving(true);
+    setManualLeadError(null);
+    try {
+      let targetAgentId = manualLeadAgentId;
+      let targetAgentName = "";
+      if (!targetAgentId) {
+        const selected = pickBalancedAgent(assignableAgents, inquiries);
+        if (selected) {
+          targetAgentId = selected.id;
+          targetAgentName = selected.name || selected.email || "Agent";
+        }
+      } else {
+        const selected = assignableAgents.find((agent) => agent.id === targetAgentId);
+        targetAgentName = selected?.name || selected?.email || "Agent";
+      }
+      const payload = {
+        buyerName,
+        buyerPhone,
+        plotLabel: manualLeadParcel.trim() || "Direct lead",
+        message: manualLeadMessage.trim() || "Manual lead captured by team.",
+        preferredContact: "Call" as const,
+        status: "responded" as const,
+        vendorName: vendorProfile?.name ?? "Vendor",
+        vendorType: vendorProfile?.type ?? "Individual",
+        vendorId: getActiveVendorId(),
+        portalId: portalId ?? null,
+        dashboardScopeId: scopeId,
+        assignedAgentId: targetAgentId,
+        assignedAgentName: targetAgentName,
+        ...(targetAgentId ? { assignedAt: serverTimestamp() } : {}),
+        respondedById: vendorId ?? "",
+        respondedByName: userDisplayName ?? "Member",
+        respondedAt: serverTimestamp(),
+        progressLogs: [
+          {
+            id: `${Date.now()}-manual-capture`,
+            kind: "system",
+            note: "Manual lead created from vendor portal.",
+            byId: vendorId ?? "",
+            byName: userDisplayName ?? "Member",
+            at: new Date().toISOString(),
+          },
+        ],
+        createdAt: serverTimestamp(),
+      };
+      await addDoc(collection(db, "inquiries"), payload);
+      setManualLeadName("");
+      setManualLeadPhone("");
+      setManualLeadParcel("");
+      setManualLeadMessage("");
+      setManualLeadAgentId("");
+      setActiveTab("leads");
+    } catch {
+      setManualLeadError("Unable to create manual lead. Try again.");
+    } finally {
+      setManualLeadSaving(false);
+    }
+  };
+
   useEffect(() => {
     if (!canAccessTab(activeTab)) {
       setActiveTab("active");
       denyAccess("Access denied. Contact admin for addition.");
     }
   }, [activeTab, canCreateListings, canViewInquiries, canViewLeads, canManageMembers, canAddSales]);
+
+  useEffect(() => {
+    setLeadProgressNote("");
+    setLeadProgressKind("follow_up");
+    setLeadNextFollowUpAt("");
+    setLeadReminderAt("");
+    setLeadReminderChannel("WhatsApp");
+  }, [selectedLeadId]);
 
   const loadingView = (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top,_#f9f1e6,_#f2ede4_55%,_#efe7d8)] text-[#14110f]">
@@ -877,24 +1254,7 @@ export default function VendorDashboard() {
         setMemberError("No user found with that email.");
         return;
       }
-      const normalizedPerms =
-        memberRole === "admin"
-          ? {
-              admin: true,
-              create_listings: true,
-              add_sales: true,
-              view_inquiries: true,
-              view_leads: true,
-              manage_members: true,
-            }
-          : {
-              admin: false,
-              create_listings: !!memberPerms.create_listings,
-              add_sales: !!memberPerms.add_sales,
-              view_inquiries: !!memberPerms.view_inquiries,
-              view_leads: !!memberPerms.view_leads,
-              manage_members: !!memberPerms.manage_members,
-            };
+      const normalizedPerms = permissionsForRole(memberRole);
       await updateDoc(doc(db, "vendorPortals", portalId), {
         memberIds: arrayUnion(userDocId),
         [`members.${userDocId}`]: {
@@ -948,12 +1308,11 @@ export default function VendorDashboard() {
 
   const startEditMember = (member: {
     id: string;
-    role: "admin" | "member";
+    role: MemberRole;
     permissions: MemberPermissions;
   }) => {
     setEditingMemberId(member.id);
     setEditingRole(member.role);
-    setEditingPerms({ ...member.permissions });
   };
 
   const saveMemberPermissions = async () => {
@@ -964,24 +1323,7 @@ export default function VendorDashboard() {
     }
     setMemberUpdating(true);
     try {
-      const normalizedPerms =
-        editingRole === "admin"
-          ? {
-              admin: true,
-              create_listings: true,
-              add_sales: true,
-              view_inquiries: true,
-              view_leads: true,
-              manage_members: true,
-            }
-          : {
-              admin: false,
-              create_listings: !!editingPerms.create_listings,
-              add_sales: !!editingPerms.add_sales,
-              view_inquiries: !!editingPerms.view_inquiries,
-              view_leads: !!editingPerms.view_leads,
-              manage_members: !!editingPerms.manage_members,
-            };
+      const normalizedPerms = permissionsForRole(editingRole);
       await updateDoc(doc(db, "vendorPortals", portalId), {
         [`members.${editingMemberId}.role`]: editingRole,
         [`members.${editingMemberId}.permissions`]: normalizedPerms,
@@ -1106,12 +1448,16 @@ export default function VendorDashboard() {
     const loadListings = async () => {
       const scopeId = getDashboardScopeId();
       if (!scopeId) return;
-      const snapshot = await getDocs(
-        query(
-          collection(db, "listings"),
-          where("dashboardScopeId", "==", scopeId)
-        )
-      );
+      const snapshot = portalId
+        ? await getDocs(
+            query(collection(db, "listings"), where("portalId", "==", portalId))
+          )
+        : await getDocs(
+            query(
+              collection(db, "listings"),
+              where("dashboardScopeId", "==", scopeId)
+            )
+          );
       const mapped: VendorPlot[] = [];
       snapshot.forEach((docSnap) => {
         const data = docSnap.data() as {
@@ -1224,21 +1570,28 @@ export default function VendorDashboard() {
   useEffect(() => {
     const loadSales = async () => {
       const scopeId = getDashboardScopeId();
-      if (!scopeId) return;
+      if (!scopeId && !portalId) return;
+      const pendingFilters = portalId
+        ? [where("portalId", "==", portalId)]
+        : [where("dashboardScopeId", "==", scopeId)];
+      const salesFilters = portalId
+        ? [where("portalId", "==", portalId)]
+        : [where("dashboardScopeId", "==", scopeId)];
+      if (!isPortalAdmin && vendorId) {
+        pendingFilters.push(where("createdByAgentId", "==", vendorId));
+        salesFilters.push(where("createdByAgentId", "==", vendorId));
+      }
       const pendingSnap = await getDocs(
-        query(
-          collection(db, "pendingSales"),
-          where("dashboardScopeId", "==", scopeId)
-        )
+        query(collection(db, "pendingSales"), ...pendingFilters)
       );
       const salesSnap = await getDocs(
-        query(
-          collection(db, "sales"),
-          where("dashboardScopeId", "==", scopeId)
-        )
+        query(collection(db, "sales"), ...salesFilters)
       );
-      const mapSale = (docSnap: any): SalesRecord => {
-        const data = docSnap.data() as SalesRecord & { createdAt?: any };
+      const mapSale = (docSnap: {
+        id: string;
+        data: () => SalesRecord;
+      }): SalesRecord => {
+        const data = docSnap.data();
         return {
           ...data,
           id: docSnap.id,
@@ -1248,7 +1601,7 @@ export default function VendorDashboard() {
       setSalesRecords(salesSnap.docs.map(mapSale));
     };
     loadSales();
-  }, [vendorId, portalId, getDashboardScopeId]);
+  }, [vendorId, portalId, getDashboardScopeId, isPortalAdmin]);
 
   useEffect(() => {
     const loadInquiries = async () => {
@@ -1261,27 +1614,76 @@ export default function VendorDashboard() {
       if (!scopeId && !vendorName) return;
       let snapshot;
       try {
-        snapshot = await getDocs(
-          query(
-            collection(db, "inquiries"),
-            scopeId
-              ? where("dashboardScopeId", "==", scopeId)
-              : where("vendorName", "==", vendorName),
-            orderBy("createdAt", "desc")
-          )
-        );
+        snapshot = portalId
+          ? await getDocs(
+              query(
+                collection(db, "inquiries"),
+                where("portalId", "==", portalId),
+                orderBy("createdAt", "desc")
+              )
+            )
+          : await getDocs(
+              query(
+                collection(db, "inquiries"),
+                scopeId
+                  ? where("dashboardScopeId", "==", scopeId)
+                  : where("vendorName", "==", vendorName),
+                orderBy("createdAt", "desc")
+              )
+            );
       } catch {
+        snapshot = portalId
+          ? await getDocs(
+              query(collection(db, "inquiries"), where("portalId", "==", portalId))
+            )
+          : await getDocs(
+              query(
+                collection(db, "inquiries"),
+                scopeId
+                  ? where("dashboardScopeId", "==", scopeId)
+                  : where("vendorName", "==", vendorName)
+              )
+            );
+      }
+      if (portalId && snapshot.empty && vendorName) {
         snapshot = await getDocs(
-          query(
-            collection(db, "inquiries"),
-            scopeId
-              ? where("dashboardScopeId", "==", scopeId)
-              : where("vendorName", "==", vendorName)
-          )
+          query(collection(db, "inquiries"), where("vendorName", "==", vendorName))
         );
       }
       const items: Inquiry[] = [];
-      snapshot.forEach((docSnap) => {
+      const pendingAssignments: {
+        id: string;
+        assignedAgentId: string;
+        assignedAgentName: string;
+        assignedAtNow: boolean;
+      }[] = [];
+      const pendingAutomationUpdates: {
+        id: string;
+        payload: Record<string, unknown>;
+      }[] = [];
+      const memberNameById = new Map(
+        portalMembers.map((member) => [member.id, member.name || member.email || "Agent"])
+      );
+      const docs = snapshot.docs;
+      const assignmentCounts = new Map<string, number>(
+        assignableAgents.map((agent) => [agent.id, 0])
+      );
+      docs.forEach((docSnap) => {
+        const data = docSnap.data() as {
+          status?: "new" | "responded" | "successful";
+          assignedAgentId?: string;
+        };
+        if (data.status === "successful") return;
+        if (!data.assignedAgentId) return;
+        if (!assignmentCounts.has(data.assignedAgentId)) return;
+        assignmentCounts.set(
+          data.assignedAgentId,
+          (assignmentCounts.get(data.assignedAgentId) ?? 0) + 1
+        );
+      });
+      const now = new Date();
+      const canAutoReassign = isWithinBusinessHours(now);
+      docs.forEach((docSnap) => {
         const data = docSnap.data() as {
           buyerName?: string;
           buyerPhone?: string;
@@ -1289,9 +1691,295 @@ export default function VendorDashboard() {
           message?: string;
           plotLabel?: string;
           createdAt?: { toDate: () => Date };
-          status?: "new" | "responded";
+          assignedAt?: { toDate: () => Date };
+          status?: "new" | "responded" | "successful";
+          assignedAgentId?: string;
+          assignedAgentName?: string;
+          respondedById?: string;
+          respondedByName?: string;
+          respondedAt?: { toDate: () => Date };
+          successfulByName?: string;
+          successfulAt?: { toDate: () => Date };
+          nextFollowUpAt?: string;
+          lastResponseReminderAt?: { toDate: () => Date };
+          lastUpdateReminderAt?: { toDate: () => Date };
+          progressLogs?: {
+            id?: string;
+            kind?:
+              | "call"
+              | "site_visit"
+              | "offer"
+              | "objection"
+              | "follow_up"
+              | "system";
+            note?: string;
+            byName?: string;
+            at?: string | { toDate: () => Date };
+            nextFollowUpAt?: string;
+            channel?: "Call" | "WhatsApp" | "SMS" | "Email";
+          }[];
+          reminders?: {
+            id?: string;
+            channel?: "Call" | "WhatsApp" | "SMS" | "Email";
+            scheduledAt?: string;
+            status?: "scheduled" | "sent";
+            note?: string;
+            sentAt?: string;
+          }[];
         };
         const createdAt = data.createdAt?.toDate();
+        const assignedAt = data.assignedAt?.toDate() ?? createdAt ?? now;
+        const respondedAtDate = data.respondedAt?.toDate?.();
+        const successfulAtDate = data.successfulAt?.toDate?.();
+        let assignedAgentId = data.assignedAgentId ?? "";
+        let assignedAgentName =
+          data.assignedAgentName ??
+          (assignedAgentId ? memberNameById.get(assignedAgentId) ?? "" : "");
+        if (!assignedAgentId && portalId && assignableAgents.length) {
+          const status = data.status ?? "new";
+          if (status === "new") {
+            const minimumLoad = Math.min(...Array.from(assignmentCounts.values()));
+            const eligibleAgents = assignableAgents.filter(
+              (agent) => (assignmentCounts.get(agent.id) ?? 0) === minimumLoad
+            );
+            const selectedAgent =
+              eligibleAgents[
+                Math.floor(Math.random() * eligibleAgents.length)
+              ];
+            assignedAgentId = selectedAgent.id;
+            assignedAgentName =
+              selectedAgent.name || selectedAgent.email || "Agent";
+            assignmentCounts.set(
+              selectedAgent.id,
+              (assignmentCounts.get(selectedAgent.id) ?? 0) + 1
+            );
+            pendingAssignments.push({
+              id: docSnap.id,
+              assignedAgentId,
+              assignedAgentName,
+              assignedAtNow: true,
+            });
+          }
+        } else if (
+          assignedAgentId &&
+          portalId &&
+          assignableAgents.length > 1 &&
+          canAutoReassign &&
+          (data.status ?? "new") === "new"
+        ) {
+          const elapsed = getBusinessElapsedMs(assignedAt, now);
+          if (elapsed >= INQUIRY_REASSIGN_AFTER_MS) {
+            const currentCount = assignmentCounts.get(assignedAgentId) ?? 0;
+            assignmentCounts.set(assignedAgentId, Math.max(currentCount - 1, 0));
+            const candidates = assignableAgents.filter(
+              (agent) => agent.id !== assignedAgentId
+            );
+            if (candidates.length) {
+              const minimumLoad = Math.min(
+                ...candidates.map((agent) => assignmentCounts.get(agent.id) ?? 0)
+              );
+              const eligibleAgents = candidates.filter(
+                (agent) => (assignmentCounts.get(agent.id) ?? 0) === minimumLoad
+              );
+              const selectedAgent =
+                eligibleAgents[
+                  Math.floor(Math.random() * eligibleAgents.length)
+                ];
+              assignedAgentId = selectedAgent.id;
+              assignedAgentName =
+                selectedAgent.name || selectedAgent.email || "Agent";
+              assignmentCounts.set(
+                selectedAgent.id,
+                (assignmentCounts.get(selectedAgent.id) ?? 0) + 1
+              );
+              pendingAssignments.push({
+                id: docSnap.id,
+                assignedAgentId,
+                assignedAgentName,
+                assignedAtNow: true,
+              });
+            } else {
+              assignmentCounts.set(assignedAgentId, currentCount);
+            }
+          }
+        }
+        const progressLogs = (data.progressLogs ?? [])
+          .map((log, index) => {
+            let atDate: Date | null = null;
+            let atLabel = "";
+            if (typeof log.at === "string") {
+              const parsed = new Date(log.at);
+              if (!Number.isNaN(parsed.getTime())) {
+                atDate = parsed;
+                atLabel = parsed.toLocaleString();
+              } else {
+                atLabel = log.at;
+              }
+            } else if (log.at?.toDate) {
+              atDate = log.at.toDate();
+              atLabel = atDate.toLocaleString();
+            }
+            return {
+              id: log.id || `${docSnap.id}-log-${index}`,
+              kind: log.kind || "follow_up",
+              note: log.note || "",
+              byName: log.byName || "Member",
+              at: atLabel || "Just now",
+              atDate,
+              nextFollowUpAt: log.nextFollowUpAt,
+              channel: log.channel,
+            };
+          })
+          .filter((log) => log.note.trim().length > 0);
+        const latestProgressAt = progressLogs
+          .filter((log) => log.atDate instanceof Date)
+          .sort((a, b) => b.atDate!.getTime() - a.atDate!.getTime())[0]?.atDate;
+        const lastActivityAt = latestProgressAt ?? respondedAtDate ?? assignedAt;
+        const reminders = (data.reminders ?? [])
+          .map((reminder, index) => ({
+            id: reminder.id || `${docSnap.id}-reminder-${index}`,
+            channel: reminder.channel || "WhatsApp",
+            scheduledAt: reminder.scheduledAt || "",
+            status: reminder.status || "scheduled",
+            note: reminder.note,
+            sentAt: reminder.sentAt,
+          }))
+          .filter((reminder) => reminder.scheduledAt);
+        const dueReminderIndexes = reminders
+          .map((reminder, index) => ({ reminder, index }))
+          .filter(({ reminder }) => {
+            if (reminder.status !== "scheduled") return false;
+            const scheduled = new Date(reminder.scheduledAt);
+            if (Number.isNaN(scheduled.getTime())) return false;
+            if (scheduled > now) return false;
+            if (!isWithinBusinessHours(now)) return false;
+            return isPortalAdmin || assignedAgentId === vendorId;
+          });
+        const automationPayload: Record<string, unknown> = {};
+        const automationLogs: {
+          id: string;
+          kind: "system";
+          note: string;
+          byId: string;
+          byName: string;
+          at: string;
+          channel?: "Call" | "WhatsApp" | "SMS" | "Email";
+        }[] = [];
+        if (dueReminderIndexes.length) {
+          const updatedReminders = reminders.map((reminder) => ({ ...reminder }));
+          dueReminderIndexes.forEach(({ reminder, index }) => {
+            updatedReminders[index] = {
+              ...updatedReminders[index],
+              status: "sent",
+              sentAt: now.toISOString(),
+            };
+            automationLogs.push({
+              id: `${Date.now()}-${index}-system-reminder`,
+              kind: "system",
+              note: `Automated ${reminder.channel} reminder sent${
+                reminder.note ? `: ${reminder.note}` : ""
+              }`,
+              byId: "system",
+              byName: "System",
+              at: now.toISOString(),
+              channel: reminder.channel,
+            });
+          });
+          automationPayload.reminders = updatedReminders;
+        }
+        if ((data.status ?? "new") === "new" && assignedAgentId && canAutoReassign) {
+          const elapsedSinceAssigned = getBusinessElapsedMs(assignedAt, now);
+          const lastResponseReminderAt = data.lastResponseReminderAt?.toDate?.();
+          const elapsedSinceResponseReminder = lastResponseReminderAt
+            ? getBusinessElapsedMs(lastResponseReminderAt, now)
+            : Number.POSITIVE_INFINITY;
+          if (
+            elapsedSinceAssigned >= SLA_RESPONSE_REMINDER_MS &&
+            elapsedSinceResponseReminder >= SLA_RESPONSE_REMINDER_MS
+          ) {
+            automationPayload.lastResponseReminderAt = serverTimestamp();
+            automationLogs.push({
+              id: `${Date.now()}-system-response-reminder`,
+              kind: "system",
+              note: "SLA reminder: no response yet. Please update this inquiry.",
+              byId: "system",
+              byName: "System",
+              at: now.toISOString(),
+            });
+          }
+        }
+        if ((data.status ?? "new") === "responded" && assignedAgentId && canAutoReassign) {
+          const elapsedSinceActivity = getBusinessElapsedMs(lastActivityAt, now);
+          const lastUpdateReminderAt = data.lastUpdateReminderAt?.toDate?.();
+          const elapsedSinceUpdateReminder = lastUpdateReminderAt
+            ? getBusinessElapsedMs(lastUpdateReminderAt, now)
+            : Number.POSITIVE_INFINITY;
+          if (
+            elapsedSinceActivity >= SLA_UPDATE_REMINDER_MS &&
+            elapsedSinceUpdateReminder >= SLA_UPDATE_REMINDER_MS
+          ) {
+            automationPayload.lastUpdateReminderAt = serverTimestamp();
+            automationLogs.push({
+              id: `${Date.now()}-system-update-reminder`,
+              kind: "system",
+              note: "SLA reminder: no lead progress update in the expected window.",
+              byId: "system",
+              byName: "System",
+              at: now.toISOString(),
+            });
+          }
+          if (elapsedSinceActivity >= SLA_UPDATE_REASSIGN_MS && assignableAgents.length > 1) {
+            const currentCount = assignmentCounts.get(assignedAgentId) ?? 0;
+            assignmentCounts.set(assignedAgentId, Math.max(currentCount - 1, 0));
+            const candidates = assignableAgents.filter(
+              (agent) => agent.id !== assignedAgentId
+            );
+            if (candidates.length) {
+              const minimumLoad = Math.min(
+                ...candidates.map((agent) => assignmentCounts.get(agent.id) ?? 0)
+              );
+              const eligibleAgents = candidates.filter(
+                (agent) => (assignmentCounts.get(agent.id) ?? 0) === minimumLoad
+              );
+              const selectedAgent =
+                eligibleAgents[
+                  Math.floor(Math.random() * eligibleAgents.length)
+                ];
+              assignedAgentId = selectedAgent.id;
+              assignedAgentName =
+                selectedAgent.name || selectedAgent.email || "Agent";
+              assignmentCounts.set(
+                selectedAgent.id,
+                (assignmentCounts.get(selectedAgent.id) ?? 0) + 1
+              );
+              pendingAssignments.push({
+                id: docSnap.id,
+                assignedAgentId,
+                assignedAgentName,
+                assignedAtNow: true,
+              });
+              automationLogs.push({
+                id: `${Date.now()}-system-update-reassign`,
+                kind: "system",
+                note: "SLA escalation: lead reassigned after prolonged inactivity.",
+                byId: "system",
+                byName: "System",
+                at: now.toISOString(),
+              });
+            } else {
+              assignmentCounts.set(assignedAgentId, currentCount);
+            }
+          }
+        }
+        if (automationLogs.length) {
+          automationPayload.progressLogs = arrayUnion(...automationLogs);
+        }
+        if (Object.keys(automationPayload).length) {
+          pendingAutomationUpdates.push({
+            id: docSnap.id,
+            payload: automationPayload,
+          });
+        }
         items.push({
           id: docSnap.id,
           buyer: data.buyerName || "Buyer",
@@ -1302,9 +1990,63 @@ export default function VendorDashboard() {
           preferredContact: data.preferredContact || "Call",
           message: data.message || "",
           status: data.status ?? "new",
+          assignedAgentId,
+          assignedAgentName,
+          respondedById: data.respondedById,
+          respondedByName: data.respondedByName,
+          respondedAt: data.respondedAt?.toDate
+            ? data.respondedAt.toDate().toLocaleString()
+            : undefined,
+          assignedAt: assignedAt.toLocaleString(),
+          successfulByName: data.successfulByName,
+          successfulAt: successfulAtDate?.toLocaleString(),
+          nextFollowUpAt: data.nextFollowUpAt,
+          progressLogs: progressLogs.map((log) => ({
+            id: log.id,
+            kind: log.kind,
+            note: log.note,
+            byName: log.byName,
+            at: log.at,
+            ...(log.nextFollowUpAt ? { nextFollowUpAt: log.nextFollowUpAt } : {}),
+            ...(log.channel ? { channel: log.channel } : {}),
+          })),
+          reminders,
         });
       });
-      setInquiries(items);
+      if (pendingAssignments.length) {
+        try {
+          await Promise.all(
+            pendingAssignments.map((assignment) =>
+              updateDoc(doc(db, "inquiries", assignment.id), {
+                assignedAgentId: assignment.assignedAgentId,
+                assignedAgentName: assignment.assignedAgentName,
+                ...(assignment.assignedAtNow
+                  ? { assignedAt: serverTimestamp() }
+                  : {}),
+                portalId: portalId ?? null,
+              })
+            )
+          );
+        } catch {
+          // Keep inquiry loading non-blocking if assignment write fails.
+        }
+      }
+      if (pendingAutomationUpdates.length) {
+        try {
+          await Promise.all(
+            pendingAutomationUpdates.map((update) =>
+              updateDoc(doc(db, "inquiries", update.id), update.payload)
+            )
+          );
+        } catch {
+          // Keep inquiry loading non-blocking if automation write fails.
+        }
+      }
+      const visibleItems =
+        isPortalAdmin || !vendorId
+          ? items
+          : items.filter((item) => item.assignedAgentId === vendorId);
+      setInquiries(visibleItems);
     };
     loadInquiries();
   }, [
@@ -1314,6 +2056,111 @@ export default function VendorDashboard() {
     canViewInquiries,
     canViewLeads,
     getDashboardScopeId,
+    isPortalAdmin,
+    assignableAgents,
+    portalMembers,
+  ]);
+
+  useEffect(() => {
+    const loadVisitRequests = async () => {
+      if (!canViewLeads) {
+        setVisitRequests([]);
+        return;
+      }
+      const scopeId = getDashboardScopeId();
+      const activeVendorId = getActiveVendorId();
+      if (!portalId && !scopeId && !activeVendorId) return;
+      let snapshot;
+      try {
+        snapshot = portalId
+          ? await getDocs(
+              query(
+                collection(db, "visitBookings"),
+                where("portalId", "==", portalId),
+                orderBy("createdAt", "desc")
+              )
+            )
+          : await getDocs(
+              query(
+                collection(db, "visitBookings"),
+                scopeId
+                  ? where("dashboardScopeId", "==", scopeId)
+                  : where("vendorId", "==", activeVendorId),
+                orderBy("createdAt", "desc")
+              )
+            );
+      } catch {
+        snapshot = portalId
+          ? await getDocs(
+              query(collection(db, "visitBookings"), where("portalId", "==", portalId))
+            )
+          : await getDocs(
+              query(
+                collection(db, "visitBookings"),
+                scopeId
+                  ? where("dashboardScopeId", "==", scopeId)
+                  : where("vendorId", "==", activeVendorId)
+              )
+            );
+      }
+      const mapped = snapshot.docs.map((docSnap) => {
+        const data = docSnap.data() as {
+          plotId?: string;
+          plotLabel?: string;
+          vendorName?: string;
+          vendorId?: string | null;
+          portalId?: string | null;
+          requestedByName?: string;
+          requestedByPhone?: string;
+          preferredVisitAt?: string;
+          note?: string;
+          status?: "requested" | "visited";
+          createdAt?: { toDate?: () => Date } | string;
+          visitedByName?: string;
+          visitedAt?: { toDate?: () => Date } | string;
+        };
+        const createdAtDate =
+          typeof data.createdAt === "object" && data.createdAt?.toDate
+            ? data.createdAt.toDate()
+            : typeof data.createdAt === "string"
+            ? new Date(data.createdAt)
+            : null;
+        const visitedAtDate =
+          typeof data.visitedAt === "object" && data.visitedAt?.toDate
+            ? data.visitedAt.toDate()
+            : typeof data.visitedAt === "string"
+            ? new Date(data.visitedAt)
+            : null;
+        return {
+          id: docSnap.id,
+          plotId: data.plotId ?? "",
+          plotLabel: data.plotLabel ?? "Parcel",
+          vendorName: data.vendorName ?? vendorProfile?.name ?? "Vendor",
+          vendorId: data.vendorId ?? null,
+          portalId: data.portalId ?? null,
+          requestedByName: data.requestedByName ?? "Buyer",
+          requestedByPhone: data.requestedByPhone ?? "",
+          preferredVisitAt: data.preferredVisitAt ?? "",
+          note: data.note ?? "",
+          status: data.status ?? "requested",
+          createdAtLabel: createdAtDate
+            ? createdAtDate.toLocaleString()
+            : "No date",
+          visitedByName: data.visitedByName ?? "",
+          visitedAtLabel: visitedAtDate
+            ? visitedAtDate.toLocaleString()
+            : undefined,
+        } as VisitRequest;
+      });
+      setVisitRequests(mapped);
+    };
+    loadVisitRequests();
+  }, [
+    canViewLeads,
+    getActiveVendorId,
+    getDashboardScopeId,
+    portalId,
+    vendorProfile?.name,
   ]);
 
   const earthRadius = 6371000;
@@ -1647,212 +2494,214 @@ export default function VendorDashboard() {
   );
 
   useEffect(() => {
-    mapPreviewDataRef.current = mapPreviewParcels;
-  }, [mapPreviewParcels]);
-
-  useEffect(() => {
     if (!mapPreviewOpen) return;
     if (!mapPreviewRef.current) return;
 
-    if (!mapPreviewInstanceRef.current) {
-      const map = new maplibregl.Map({
-        container: mapPreviewRef.current,
-        style:
-          typeof mapPreviewStyle === "string"
-            ? mapPreviewStyle
-            : (mapPreviewStyle as unknown as maplibregl.StyleSpecification),
-        center: [36.668, -1.248],
-        zoom: 14,
-      });
-      map.addControl(new maplibregl.NavigationControl(), "bottom-right");
-      mapPreviewInstanceRef.current = map;
-
-      map.on("load", () => {
-        map.addSource("parcel-preview", {
-          type: "geojson",
-          data: {
-            type: "FeatureCollection",
-            features: [],
-          },
+    let cancelled = false;
+    loadGoogleMapsApi()
+      .then((maps) => {
+        if (cancelled || !mapPreviewRef.current) return;
+        googleMapsApiRef.current = maps;
+        if (mapPreviewInstanceRef.current) return;
+        mapPreviewInstanceRef.current = new maps.Map(mapPreviewRef.current, {
+          center: { lat: -1.248, lng: 36.668 },
+          zoom: 14,
+          mapId: googleMapId,
+          mapTypeId: "hybrid",
+          mapTypeControl: false,
+          streetViewControl: false,
+          fullscreenControl: false,
+          zoomControl: true,
+          gestureHandling: "greedy",
+          scrollwheel: true,
+          styles: reducedLabelStyles,
         });
-        map.addLayer({
-          id: "parcel-preview-fill",
-          type: "fill",
-          source: "parcel-preview",
-          paint: {
-            "fill-color": "#c77d4b",
-            "fill-opacity": 0.3,
-          },
-        });
-        map.addLayer({
-          id: "parcel-preview-line",
-          type: "line",
-          source: "parcel-preview",
-          paint: {
-            "line-color": "#1f3d2d",
-            "line-width": 2,
-          },
-        });
-
-        const source = map.getSource("parcel-preview") as maplibregl.GeoJSONSource;
-        if (source) {
-          const parcels = mapPreviewDataRef.current;
-          source.setData({
-            type: "FeatureCollection",
-            features: parcels.map((parcel) => ({
-              type: "Feature",
-              properties: { id: parcel.id },
-              geometry: {
-                type: "Polygon",
-                coordinates: [parcel.polygon],
-              },
-            })),
-          });
-          if (parcels.length) {
-            const bounds = new maplibregl.LngLatBounds();
-            parcels.forEach((parcel) => {
-              parcel.polygon.forEach((coord) => bounds.extend(coord));
-            });
-            map.fitBounds(bounds, { padding: 40, duration: 0 });
-          }
-        }
+      })
+      .catch(() => {
+        setMapSearchError("Google Maps failed to load.");
       });
 
-      map.on("mousedown", "parcel-preview-fill", (event) => {
-        const feature = event.features?.[0];
-        const id = feature?.properties?.id as number | undefined;
-        if (!id) return;
-        map.getCanvas().style.cursor = "grabbing";
-        mapPreviewDragRef.current = {
-          parcelId: id,
-          lastLngLat: event.lngLat,
-        };
-      });
-
-      map.on("mousemove", (event) => {
-        const dragState = mapPreviewDragRef.current;
-        if (!dragState.parcelId || !dragState.lastLngLat) return;
-        const deltaLng = event.lngLat.lng - dragState.lastLngLat.lng;
-        const deltaLat = event.lngLat.lat - dragState.lastLngLat.lat;
-        dragState.lastLngLat = event.lngLat;
-
-        setSubParcels((current) =>
-          current.map((parcel) => {
-            if (parcel.id !== dragState.parcelId) return parcel;
-            const translate = (points: { lat: number; lng: number }[]) =>
-              points.map((point) => ({
-                lat: point.lat + deltaLat,
-                lng: point.lng + deltaLng,
-              }));
-            return {
-              ...parcel,
-              rawPath: translate(parcel.rawPath),
-              cleanPath: translate(parcel.cleanPath),
-            };
-          })
-        );
-      });
-
-      const stopDrag = () => {
-        if (mapPreviewInstanceRef.current) {
-          mapPreviewInstanceRef.current.getCanvas().style.cursor = "";
-        }
-        mapPreviewDragRef.current = { parcelId: null, lastLngLat: null };
-      };
-
-      map.on("mouseup", stopDrag);
-      map.on("mouseleave", stopDrag);
-    }
-  }, [mapPreviewOpen, mapPreviewStyle]);
+    return () => {
+      cancelled = true;
+    };
+  }, [mapPreviewOpen, reducedLabelStyles, googleMapId]);
 
   useEffect(() => {
     if (mapPreviewOpen) return;
-    if (mapPreviewInstanceRef.current) {
-      mapPreviewInstanceRef.current.remove();
-      mapPreviewInstanceRef.current = null;
+    const maps = googleMapsApiRef.current;
+    mapPreviewPolygonRef.current.forEach((polygon) => {
+      if (maps) {
+        maps.event.clearInstanceListeners(polygon);
+      }
+      polygon.setMap(null);
+    });
+    mapPreviewPolygonRef.current.clear();
+    mapPreviewInstanceRef.current = null;
+    if (mapPreviewRef.current) {
+      mapPreviewRef.current.innerHTML = "";
     }
   }, [mapPreviewOpen]);
 
   useEffect(() => {
     const map = mapPreviewInstanceRef.current;
-    if (!map) return;
-    const source = map.getSource("parcel-preview") as maplibregl.GeoJSONSource;
-    if (!source) return;
-    source.setData({
-      type: "FeatureCollection",
-      features: mapPreviewParcels.map((parcel) => ({
-        type: "Feature",
-        properties: { id: parcel.id },
-        geometry: {
-          type: "Polygon",
-          coordinates: [parcel.polygon],
-        },
-      })),
+    const maps = googleMapsApiRef.current;
+    if (!map || !maps) return;
+
+    mapPreviewPolygonRef.current.forEach((polygon) => {
+      maps.event.clearInstanceListeners(polygon);
+      polygon.setMap(null);
     });
-    if (mapPreviewParcels.length) {
-      const bounds = new maplibregl.LngLatBounds();
-      mapPreviewParcels.forEach((parcel) => {
-        parcel.polygon.forEach((coord) => bounds.extend(coord));
+    mapPreviewPolygonRef.current.clear();
+
+    if (!mapPreviewParcels.length) return;
+
+    const bounds = new maps.LatLngBounds();
+    mapPreviewParcels.forEach((parcel) => {
+      const path = parcel.polygon.map(([lng, lat]) => ({ lat, lng }));
+      path.forEach((point) => bounds.extend(point));
+
+      const polygon = new maps.Polygon({
+        map,
+        paths: path,
+        strokeColor: "#1f3d2d",
+        strokeOpacity: 0.95,
+        strokeWeight: 2,
+        fillColor: "#c77d4b",
+        fillOpacity: 0.3,
+        draggable: true,
+        clickable: true,
       });
-      map.fitBounds(bounds, { padding: 40, duration: 600 });
-    }
+
+      maps.event.addListener(polygon, "dragend", () => {
+        const draggedPath = polygon.getPath();
+        const nextPoints = Array.from({ length: draggedPath.getLength() }).map(
+          (_, index) => {
+            const point = draggedPath.getAt(index);
+            return {
+              lat: point.lat(),
+              lng: point.lng(),
+            };
+          }
+        );
+        const normalized =
+          nextPoints.length > 2 &&
+          nextPoints[0].lat === nextPoints[nextPoints.length - 1].lat &&
+          nextPoints[0].lng === nextPoints[nextPoints.length - 1].lng
+            ? nextPoints.slice(0, -1)
+            : nextPoints;
+        setSubParcels((current) =>
+          current.map((item) =>
+            item.id === parcel.id
+              ? {
+                  ...item,
+                  rawPath: normalized,
+                  cleanPath: normalized,
+                }
+              : item
+          )
+        );
+      });
+      mapPreviewPolygonRef.current.set(parcel.id, polygon);
+    });
+
+    map.fitBounds(bounds, 40);
   }, [mapPreviewParcels]);
 
   useEffect(() => {
     if (!anchorMapOpen) return;
     if (!anchorMapRef.current) return;
 
-    if (!anchorMapInstanceRef.current) {
-      const map = new maplibregl.Map({
-        container: anchorMapRef.current,
-        style:
-          typeof mapPreviewStyle === "string"
-            ? mapPreviewStyle
-            : (mapPreviewStyle as unknown as maplibregl.StyleSpecification),
-        center: anchorTrueCoord
-          ? [anchorTrueCoord.lng, anchorTrueCoord.lat]
-          : [36.668, -1.248],
-        zoom: anchorTrueCoord ? 18 : 14,
+    let cancelled = false;
+    loadGoogleMapsApi()
+      .then((maps) => {
+        if (cancelled || !anchorMapRef.current) return;
+        googleMapsApiRef.current = maps;
+        if (!anchorMapInstanceRef.current) {
+          const map = new maps.Map(anchorMapRef.current, {
+            center: anchorTrueCoord
+              ? { lat: anchorTrueCoord.lat, lng: anchorTrueCoord.lng }
+              : { lat: -1.248, lng: 36.668 },
+            zoom: anchorTrueCoord ? 18 : 14,
+            mapId: googleMapId,
+            mapTypeId: "hybrid",
+            mapTypeControl: false,
+            streetViewControl: false,
+            fullscreenControl: false,
+            zoomControl: true,
+            gestureHandling: "greedy",
+            scrollwheel: true,
+            styles: reducedLabelStyles,
+          });
+          anchorMapInstanceRef.current = map;
+          anchorMapClickListenerRef.current = maps.event.addListener(
+            map,
+            "click",
+            (...args: unknown[]) => {
+              const event = (args[0] ?? null) as
+                | {
+                    latLng?: {
+                      lat: () => number;
+                      lng: () => number;
+                    };
+                  }
+                | null;
+              if (!event?.latLng) return;
+              const next = {
+                lat: event.latLng.lat(),
+                lng: event.latLng.lng(),
+              };
+              setAnchorTrueCoord(next);
+              setAnchorStatus("Anchor landmark set.");
+            }
+          );
+        } else if (anchorTrueCoord) {
+          anchorMapInstanceRef.current.setCenter({
+            lat: anchorTrueCoord.lat,
+            lng: anchorTrueCoord.lng,
+          });
+          anchorMapInstanceRef.current.setZoom(18);
+        }
+      })
+      .catch(() => {
+        setAnchorSearchError("Google Maps failed to load.");
       });
-      map.addControl(new maplibregl.NavigationControl(), "bottom-right");
-      anchorMapInstanceRef.current = map;
 
-      map.on("click", (event) => {
-        const next = { lat: event.lngLat.lat, lng: event.lngLat.lng };
-        setAnchorTrueCoord(next);
-        setAnchorStatus("Anchor landmark set.");
-      });
-    } else if (anchorTrueCoord) {
-      anchorMapInstanceRef.current.easeTo({
-        center: [anchorTrueCoord.lng, anchorTrueCoord.lat],
-        zoom: 18,
-        duration: 600,
-      });
-    }
-  }, [anchorMapOpen, anchorTrueCoord, mapPreviewStyle]);
+    return () => {
+      cancelled = true;
+    };
+  }, [anchorMapOpen, anchorTrueCoord, reducedLabelStyles, googleMapId]);
 
   useEffect(() => {
     if (!anchorMapOpen) return;
     if (!anchorMapInstanceRef.current) return;
     if (!anchorTrueCoord) return;
+    const maps = googleMapsApiRef.current;
+    if (!maps) return;
     if (!anchorMarkerRef.current) {
-      anchorMarkerRef.current = new maplibregl.Marker({ color: "#1f3d2d" })
-        .setLngLat([anchorTrueCoord.lng, anchorTrueCoord.lat])
-        .addTo(anchorMapInstanceRef.current);
+      anchorMarkerRef.current = new maps.Marker({
+        map: anchorMapInstanceRef.current,
+        position: { lat: anchorTrueCoord.lat, lng: anchorTrueCoord.lng },
+        title: "Selected anchor",
+      });
     } else {
-      anchorMarkerRef.current.setLngLat([
-        anchorTrueCoord.lng,
-        anchorTrueCoord.lat,
-      ]);
+      anchorMarkerRef.current.setPosition({
+        lat: anchorTrueCoord.lat,
+        lng: anchorTrueCoord.lng,
+      });
     }
   }, [anchorTrueCoord, anchorMapOpen]);
 
   useEffect(() => {
     if (anchorMapOpen) return;
-    if (anchorMapInstanceRef.current) {
-      anchorMapInstanceRef.current.remove();
-      anchorMapInstanceRef.current = null;
+    if (anchorMapClickListenerRef.current) {
+      anchorMapClickListenerRef.current.remove();
+      anchorMapClickListenerRef.current = null;
     }
+    anchorMapInstanceRef.current = null;
+    if (anchorMapRef.current) {
+      anchorMapRef.current.innerHTML = "";
+    }
+    anchorMarkerRef.current?.setMap(null);
     anchorMarkerRef.current = null;
   }, [anchorMapOpen]);
 
@@ -2381,22 +3230,18 @@ export default function VendorDashboard() {
 
   const runMapSearch = async () => {
     const trimmed = mapSearchQuery.trim();
-    if (!trimmed || !mapboxToken) return;
+    if (!trimmed) return;
     setMapSearchLoading(true);
     setMapSearchError(null);
     try {
-      const response = await fetch(
-        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(
-          trimmed
-        )}.json?access_token=${mapboxToken}&limit=5`
-      );
+      const response = await fetch(`/api/google-geocode?q=${encodeURIComponent(trimmed)}`);
       if (!response.ok) {
         throw new Error("Search failed");
       }
       const data = (await response.json()) as {
-        features?: { id: string; place_name: string; center: [number, number] }[];
+        results?: { id: string; place_name: string; center: [number, number] }[];
       };
-      setMapSearchResults(data.features ?? []);
+      setMapSearchResults(data.results ?? []);
     } catch {
       setMapSearchError("Search failed. Try again.");
       setMapSearchResults([]);
@@ -2407,22 +3252,18 @@ export default function VendorDashboard() {
 
   const runAnchorSearch = async () => {
     const trimmed = anchorSearchQuery.trim();
-    if (!trimmed || !mapboxToken) return;
+    if (!trimmed) return;
     setAnchorSearchLoading(true);
     setAnchorSearchError(null);
     try {
-      const response = await fetch(
-        `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(
-          trimmed
-        )}.json?access_token=${mapboxToken}&limit=5`
-      );
+      const response = await fetch(`/api/google-geocode?q=${encodeURIComponent(trimmed)}`);
       if (!response.ok) {
         throw new Error("Search failed");
       }
       const data = (await response.json()) as {
-        features?: { id: string; place_name: string; center: [number, number] }[];
+        results?: { id: string; place_name: string; center: [number, number] }[];
       };
-      setAnchorSearchResults(data.features ?? []);
+      setAnchorSearchResults(data.results ?? []);
     } catch {
       setAnchorSearchError("Search failed. Try again.");
       setAnchorSearchResults([]);
@@ -2799,6 +3640,88 @@ export default function VendorDashboard() {
     0
   );
   const totalExistingValue = Math.max(totalPostedValue - totalSoldValue, 0);
+  const visiblePendingSales = useMemo(
+    () =>
+      isPortalAdmin || !vendorId
+        ? pendingSalesRecords
+        : pendingSalesRecords.filter(
+            (sale) => sale.createdByAgentId === vendorId
+          ),
+    [isPortalAdmin, pendingSalesRecords, vendorId]
+  );
+  const visibleSales = useMemo(
+    () =>
+      isPortalAdmin || !vendorId
+        ? salesRecords
+        : salesRecords.filter((sale) => sale.createdByAgentId === vendorId),
+    [isPortalAdmin, salesRecords, vendorId]
+  );
+  const agentSoldValueSoFar = visibleSales.reduce(
+    (sum, sale) => sum + sale.salePrice,
+    0
+  );
+  const agentScorecards = useMemo(() => {
+    const agents = portalMembers.filter(
+      (member) =>
+        member.role === "agent" && (isPortalAdmin || member.id === vendorId)
+    );
+    const now = new Date();
+    return agents.map((agent) => {
+      const assigned = inquiries.filter((item) => item.assignedAgentId === agent.id);
+      const respondedOrWon = assigned.filter(
+        (item) =>
+          (item.status ?? "new") === "responded" ||
+          (item.status ?? "new") === "successful"
+      );
+      const won = assigned.filter((item) => (item.status ?? "new") === "successful");
+      const responseMinutes = assigned
+        .map((item) => {
+          const assignedAt = item.assignedAt ? new Date(item.assignedAt) : null;
+          const respondedAt = item.respondedAt ? new Date(item.respondedAt) : null;
+          if (!assignedAt || !respondedAt) return null;
+          if (
+            Number.isNaN(assignedAt.getTime()) ||
+            Number.isNaN(respondedAt.getTime())
+          ) {
+            return null;
+          }
+          return Math.max(
+            Math.round((respondedAt.getTime() - assignedAt.getTime()) / 60000),
+            0
+          );
+        })
+        .filter((value): value is number => typeof value === "number");
+      const avgResponseMinutes = responseMinutes.length
+        ? Math.round(
+            responseMinutes.reduce((sum, value) => sum + value, 0) /
+              responseMinutes.length
+          )
+        : null;
+      const revenueClosed = salesRecords
+        .filter((sale) => sale.createdByAgentId === agent.id)
+        .reduce((sum, sale) => sum + sale.salePrice, 0);
+      const overdueFollowUps = assigned.filter((item) => {
+        if ((item.status ?? "new") !== "responded") return false;
+        if (!item.nextFollowUpAt) return false;
+        const nextDate = new Date(item.nextFollowUpAt);
+        if (Number.isNaN(nextDate.getTime())) return false;
+        return nextDate < now;
+      }).length;
+      const winRate = respondedOrWon.length
+        ? Math.round((won.length / respondedOrWon.length) * 100)
+        : 0;
+      return {
+        agentId: agent.id,
+        agentName: agent.name || agent.email || "Agent",
+        won: won.length,
+        responded: respondedOrWon.length,
+        winRate,
+        avgResponseMinutes,
+        revenueClosed,
+        overdueFollowUps,
+      };
+    });
+  }, [inquiries, portalMembers, salesRecords, isPortalAdmin, vendorId]);
 
   const movePendingToSales = (saleId: string) => {
     setPendingSalesRecords((current) => {
@@ -2890,6 +3813,9 @@ export default function VendorDashboard() {
         vendorId: activeVendorId,
         portalId: portalId ?? null,
         dashboardScopeId: scopeId,
+        createdByAgentId: sale.createdByAgentId ?? vendorId ?? activeVendorId,
+        createdByAgentName:
+          sale.createdByAgentName ?? userDisplayName ?? "Agent",
         ...serializeSaleRecordForFirestore({
           ...sale,
           totalPaid: sale.netToVendor,
@@ -3140,6 +4066,8 @@ export default function VendorDashboard() {
     const remainingBalance = Math.max(netToVendor - totalPaid, 0);
 
     const saleId = generateSaleId();
+    const createdByAgentId = vendorId ?? activeVendorId ?? "";
+    const createdByAgentName = userDisplayName ?? "Agent";
     let uploadedInstallments = normalizedInstallments.map((installment) => {
       const cleaned = { ...installment };
       delete cleaned.proofFile;
@@ -3233,6 +4161,8 @@ export default function VendorDashboard() {
       remainingBalance,
       installments: uploadedInstallments,
       soldOn: "Sold today",
+      createdByAgentId,
+      createdByAgentName,
       ...(nextPaymentDate ? { nextPaymentDate } : {}),
       ...(uploadedAttachments.length ? { attachments: uploadedAttachments } : {}),
     };
@@ -3585,6 +4515,7 @@ export default function VendorDashboard() {
                 { id: "drafts", label: "Drafts" },
                 { id: "inquiries", label: "Inquiries" },
                 { id: "leads", label: "Leads" },
+                { id: "visits", label: "Site visits" },
                 { id: "pending", label: "Pending sales" },
                 { id: "sales", label: "Sales" },
                 { id: "members", label: "Members" },
@@ -3599,6 +4530,7 @@ export default function VendorDashboard() {
                         | "drafts"
                         | "inquiries"
                         | "leads"
+                        | "visits"
                         | "pending"
                         | "sales"
                         | "members"
@@ -3670,6 +4602,8 @@ export default function VendorDashboard() {
                     ? "Inquiries"
                     : activeTab === "leads"
                     ? "Leads"
+                    : activeTab === "visits"
+                    ? "Site visits"
                     : activeTab === "pending"
                     ? "Pending sales"
                     : activeTab === "members"
@@ -3685,6 +4619,8 @@ export default function VendorDashboard() {
                     ? "Latest inquiries"
                     : activeTab === "leads"
                     ? "Responded leads"
+                    : activeTab === "visits"
+                    ? "Site visit requests"
                     : activeTab === "pending"
                     ? "Pending sales"
                     : activeTab === "members"
@@ -3692,37 +4628,63 @@ export default function VendorDashboard() {
                     : "Sales records"}
                 </h2>
               </div>
-              <button className="rounded-full border border-[#1f3d2d]/30 px-4 py-2 text-xs font-medium text-[#1f3d2d] transition hover:border-[#1f3d2d]">
-                View all
-              </button>
+              {isPortalAdmin ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const query = portalId ? `?portalId=${portalId}` : "";
+                    window.location.href = `/vendor/overview${query}`;
+                  }}
+                  className="rounded-full border border-[#1f3d2d]/30 px-4 py-2 text-xs font-medium text-[#1f3d2d] transition hover:border-[#1f3d2d]"
+                >
+                  Overview
+                </button>
+              ) : (
+                <button className="rounded-full border border-[#1f3d2d]/30 px-4 py-2 text-xs font-medium text-[#1f3d2d] transition hover:border-[#1f3d2d]">
+                  View all
+                </button>
+              )}
             </div>
 
-            <div className="mt-4 grid gap-3 rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-4 py-3 text-xs md:grid-cols-3">
-              <div>
-                <p className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
-                  Total posted value
-                </p>
-                <p className="mt-2 text-sm font-semibold text-[#14110f]">
-                  Ksh {totalPostedValue.toLocaleString()}
-                </p>
+            {isPortalAdmin && (
+              <div className="mt-4 grid gap-3 rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-4 py-3 text-xs md:grid-cols-3">
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                    Total posted value
+                  </p>
+                  <p className="mt-2 text-sm font-semibold text-[#14110f]">
+                    Ksh {totalPostedValue.toLocaleString()}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                    Existing value
+                  </p>
+                  <p className="mt-2 text-sm font-semibold text-[#14110f]">
+                    Ksh {totalExistingValue.toLocaleString()}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                    Sold value
+                  </p>
+                  <p className="mt-2 text-sm font-semibold text-[#14110f]">
+                    Ksh {totalSoldValue.toLocaleString()}
+                  </p>
+                </div>
               </div>
-              <div>
-                <p className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
-                  Existing value
-                </p>
-                <p className="mt-2 text-sm font-semibold text-[#14110f]">
-                  Ksh {totalExistingValue.toLocaleString()}
-                </p>
-              </div>
-              <div>
-                <p className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
-                  Sold value
-                </p>
-                <p className="mt-2 text-sm font-semibold text-[#14110f]">
-                  Ksh {totalSoldValue.toLocaleString()}
-                </p>
-              </div>
-            </div>
+            )}
+            {!isPortalAdmin &&
+              (activeTab === "pending" || activeTab === "sales") && (
+                <div className="mt-4 rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-4 py-3 text-xs">
+                  <p className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                    Your sold summary
+                  </p>
+                  <p className="mt-2 text-sm font-semibold text-[#14110f]">
+                    Ksh {agentSoldValueSoFar.toLocaleString()}
+                  </p>
+                </div>
+              )}
 
             {activeTab === "active" && (
               <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
@@ -4086,7 +5048,7 @@ export default function VendorDashboard() {
                           .includes(searchText.inquiries.toLowerCase())
                       : true
                   )
-                  .filter((lead) => (lead.status ?? "new") !== "responded")
+                  .filter((lead) => (lead.status ?? "new") === "new")
                   .map((lead) => (
                   <button
                     key={lead.id}
@@ -4108,6 +5070,11 @@ export default function VendorDashboard() {
                       <p className="mt-1 text-xs text-[#5a4a44]">
                         {lead.parcel}
                       </p>
+                      {lead.assignedAgentName && (
+                        <p className="mt-1 text-[10px] text-[#7a6a63]">
+                          Assigned to: {lead.assignedAgentName}
+                        </p>
+                      )}
                     </div>
                     <div className="text-right text-xs">
                       <p className="text-[#1f3d2d]">{lead.intent} intent</p>
@@ -4136,6 +5103,17 @@ export default function VendorDashboard() {
                           <p className="text-[#5a4a44]">
                             Phone: {inquiry.phone}
                           </p>
+                          {inquiry.assignedAgentName && (
+                            <p className="text-[#5a4a44]">
+                              Assigned to: {inquiry.assignedAgentName}
+                            </p>
+                          )}
+                          {isPortalAdmin && (
+                            <p className="text-[#5a4a44]">
+                              Responded by:{" "}
+                              {inquiry.respondedByName || "Not responded yet"}
+                            </p>
+                          )}
                           <p className="rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-3 py-3 text-[11px] text-[#5a4a44]">
                             {inquiry.message}
                           </p>
@@ -4144,12 +5122,24 @@ export default function VendorDashboard() {
                             onClick={async () => {
                               await updateDoc(
                                 doc(db, "inquiries", inquiry.id),
-                                { status: "responded" }
+                                {
+                                  status: "responded",
+                                  respondedById: vendorId ?? "",
+                                  respondedByName: userDisplayName ?? "Member",
+                                  respondedAt: serverTimestamp(),
+                                }
                               );
                               setInquiries((current) =>
                                 current.map((item) =>
                                   item.id === inquiry.id
-                                    ? { ...item, status: "responded" }
+                                    ? {
+                                        ...item,
+                                        status: "responded",
+                                        respondedById: vendorId ?? "",
+                                        respondedByName:
+                                          userDisplayName ?? "Member",
+                                        respondedAt: new Date().toLocaleString(),
+                                      }
                                     : item
                                 )
                               );
@@ -4201,9 +5191,104 @@ export default function VendorDashboard() {
                     />
                   )}
                 </div>
+                <div className="rounded-2xl border border-[#eadfce] bg-white px-4 py-3 text-xs text-[#5a4a44]">
+                  <p className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                    SLA automation
+                  </p>
+                  <p className="mt-2">
+                    Response reminder: {Math.round(SLA_RESPONSE_REMINDER_MS / 3600000)}h
+                    . Reassign: {Math.round(INQUIRY_REASSIGN_AFTER_MS / 3600000)}h.
+                    Lead update reminder: {Math.round(SLA_UPDATE_REMINDER_MS / 3600000)}h.
+                    Lead inactivity reassign: {Math.round(SLA_UPDATE_REASSIGN_MS / 3600000)}h.
+                    Active window: {BUSINESS_START_HOUR}:00-{BUSINESS_END_HOUR}:00.
+                  </p>
+                </div>
+                {agentScorecards.length > 0 && (
+                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                    {agentScorecards.map((card) => (
+                      <div
+                        key={card.agentId}
+                        className="rounded-2xl border border-[#eadfce] bg-white px-4 py-3 text-xs"
+                      >
+                        <p className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                          {card.agentName}
+                        </p>
+                        <div className="mt-2 space-y-1 text-[#5a4a44]">
+                          <p>Win rate: {card.winRate}%</p>
+                          <p>
+                            Avg response:{" "}
+                            {card.avgResponseMinutes !== null
+                              ? `${card.avgResponseMinutes} min`
+                              : "N/A"}
+                          </p>
+                          <p>Revenue closed: Ksh {card.revenueClosed.toLocaleString()}</p>
+                          <p>Overdue follow-ups: {card.overdueFollowUps}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                <div className="rounded-2xl border border-[#eadfce] bg-white px-4 py-3 text-xs">
+                  <p className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                    Add manual lead
+                  </p>
+                  {manualLeadError && (
+                    <p className="mt-2 text-[11px] text-[#b3261e]">{manualLeadError}</p>
+                  )}
+                  <div className="mt-3 grid gap-2 md:grid-cols-2">
+                    <input
+                      type="text"
+                      value={manualLeadName}
+                      onChange={(event) => setManualLeadName(event.target.value)}
+                      placeholder="Lead name"
+                      className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                    />
+                    <input
+                      type="text"
+                      value={manualLeadPhone}
+                      onChange={(event) => setManualLeadPhone(event.target.value)}
+                      placeholder="Phone number"
+                      className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                    />
+                    <input
+                      type="text"
+                      value={manualLeadParcel}
+                      onChange={(event) => setManualLeadParcel(event.target.value)}
+                      placeholder="Parcel or interest"
+                      className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                    />
+                    <select
+                      value={manualLeadAgentId}
+                      onChange={(event) => setManualLeadAgentId(event.target.value)}
+                      className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                    >
+                      <option value="">Auto-assign by load</option>
+                      {assignableAgents.map((agent) => (
+                        <option key={agent.id} value={agent.id}>
+                          {agent.name || agent.email}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <textarea
+                    value={manualLeadMessage}
+                    onChange={(event) => setManualLeadMessage(event.target.value)}
+                    placeholder="Context notes..."
+                    className="mt-2 min-h-[72px] w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                  />
+                  <button
+                    type="button"
+                    onClick={createManualLead}
+                    disabled={manualLeadSaving}
+                    className="mt-3 rounded-full bg-[#1f3d2d] px-4 py-2 text-[11px] font-semibold text-white disabled:opacity-60"
+                  >
+                    {manualLeadSaving ? "Saving..." : "Create manual lead"}
+                  </button>
+                </div>
                 {inquiries
                   .filter((lead) =>
-                    (lead.status ?? "new") === "responded"
+                    (lead.status ?? "new") === "responded" ||
+                    (lead.status ?? "new") === "successful"
                   )
                   .filter((lead) =>
                     searchText.leads
@@ -4215,7 +5300,16 @@ export default function VendorDashboard() {
                   .map((lead) => (
                     <div
                       key={lead.id}
-                      className="flex w-full flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-4 py-3 text-left"
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setSelectedLeadId(lead.id)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          setSelectedLeadId(lead.id);
+                        }
+                      }}
+                      className="flex w-full flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-4 py-3 text-left transition hover:border-[#c9b8a6]"
                     >
                       <div>
                         <p className="text-xs uppercase tracking-[0.3em] text-[#a67047]">
@@ -4230,26 +5324,156 @@ export default function VendorDashboard() {
                         <p className="mt-1 text-[10px] text-[#7a6a63]">
                           {lead.phone}
                         </p>
+                        {isPortalAdmin && lead.assignedAgentName && (
+                          <p className="mt-1 text-[10px] text-[#7a6a63]">
+                            Assigned to: {lead.assignedAgentName}
+                          </p>
+                        )}
+                        {isPortalAdmin && (
+                          <p className="mt-1 text-[10px] text-[#7a6a63]">
+                            Responded by:{" "}
+                            {lead.respondedByName || "Not recorded"}
+                          </p>
+                        )}
                       </div>
                       <div className="flex items-center gap-2">
                         <span className="rounded-full border border-[#eadfce] bg-white px-3 py-1 text-[10px] text-[#7a5f54]">
-                          Responded
+                          {(lead.status ?? "responded") === "successful"
+                            ? "Successful"
+                            : "Responded"}
                         </span>
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            await deleteDoc(doc(db, "inquiries", lead.id));
-                            setInquiries((current) =>
-                              current.filter((item) => item.id !== lead.id)
-                            );
-                          }}
-                          className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#5a4a44]"
-                        >
-                          Delete
-                        </button>
+                        <span className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px] text-[#5a4a44]">
+                          Open
+                        </span>
                       </div>
+                      {!isPortalAdmin && (
+                        <div className="mt-2 w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-[11px] text-[#5a4a44]">
+                          {leadAiSuggestions[lead.id] ? (
+                            <>
+                              <p className="text-[10px] uppercase tracking-[0.2em] text-[#a67047]">
+                                AI next step
+                              </p>
+                              <p className="mt-1 text-[#14110f]">
+                                {leadAiSuggestions[lead.id].nextSteps[0] || "Follow up with tailored message."}
+                              </p>
+                            </>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                generateLeadAiSuggestions(lead);
+                              }}
+                              className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px]"
+                            >
+                              {leadAiLoading[lead.id] ? "Generating..." : "AI next step"}
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
                   ))}
+              </div>
+            )}
+
+            {activeTab === "visits" && (
+              <div className="mt-5 space-y-3 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setSearchVisible((current) => ({
+                        ...current,
+                        visits: !current.visits,
+                      }))
+                    }
+                    className="rounded-full border border-[#eadfce] bg-white px-3 py-1 text-[11px] text-[#5a4a44]"
+                  >
+                    {searchVisible.visits ? "Hide search" : "Search"}
+                  </button>
+                  {searchVisible.visits && (
+                    <input
+                      type="text"
+                      value={searchText.visits}
+                      onChange={(event) =>
+                        setSearchText((current) => ({
+                          ...current,
+                          visits: event.target.value,
+                        }))
+                      }
+                      placeholder="Search visit requests..."
+                      className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-xs text-[#14110f] sm:w-72"
+                    />
+                  )}
+                </div>
+                {visitRequests.length === 0 ? (
+                  <p className="rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-4 py-3 text-xs text-[#5a4a44]">
+                    No site visit requests yet.
+                  </p>
+                ) : (
+                  visitRequests
+                    .filter((visit) =>
+                      searchText.visits
+                        ? `${visit.id} ${visit.plotLabel} ${visit.requestedByName} ${visit.requestedByPhone} ${visit.status}`
+                            .toLowerCase()
+                            .includes(searchText.visits.toLowerCase())
+                        : true
+                    )
+                    .map((visit) => (
+                      <div
+                        key={visit.id}
+                        className="rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-4 py-3"
+                      >
+                        <div className="flex flex-wrap items-start justify-between gap-2">
+                          <div>
+                            <p className="text-xs uppercase tracking-[0.3em] text-[#a67047]">
+                              {visit.id}
+                            </p>
+                            <p className="mt-1 font-semibold text-[#14110f]">
+                              {visit.plotLabel}
+                            </p>
+                            <p className="mt-1 text-xs text-[#5a4a44]">
+                              Requested by: {visit.requestedByName}
+                            </p>
+                            <p className="mt-1 text-[10px] text-[#7a6a63]">
+                              Phone: {visit.requestedByPhone || "N/A"}
+                            </p>
+                            <p className="mt-1 text-[10px] text-[#7a6a63]">
+                              Preferred time: {visit.preferredVisitAt || "N/A"}
+                            </p>
+                            {visit.note ? (
+                              <p className="mt-1 text-[10px] text-[#7a6a63]">
+                                Note: {visit.note}
+                              </p>
+                            ) : null}
+                            <p className="mt-1 text-[10px] text-[#7a6a63]">
+                              Requested at: {visit.createdAtLabel}
+                            </p>
+                            {visit.status === "visited" && (
+                              <p className="mt-1 text-[10px] text-[#7a6a63]">
+                                Visited by: {visit.visitedByName || "Member"}
+                                {visit.visitedAtLabel ? ` on ${visit.visitedAtLabel}` : ""}
+                              </p>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <span className="rounded-full border border-[#eadfce] bg-white px-3 py-1 text-[10px] text-[#7a5f54]">
+                              {visit.status === "visited" ? "Visited" : "Requested"}
+                            </span>
+                            {visit.status !== "visited" && (
+                              <button
+                                type="button"
+                                onClick={() => markVisitAsVisited(visit.id)}
+                                className="rounded-full bg-[#1f3d2d] px-3 py-1 text-[10px] font-semibold text-white"
+                              >
+                                Mark as visited
+                              </button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))
+                )}
               </div>
             )}
 
@@ -4304,48 +5528,13 @@ export default function VendorDashboard() {
                     <select
                       value={memberRole}
                       onChange={(event) =>
-                        setMemberRole(event.target.value as "admin" | "member")
+                        setMemberRole(event.target.value as MemberRole)
                       }
                       className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
                     >
-                      <option value="member">Member</option>
                       <option value="admin">Admin</option>
+                      <option value="agent">Agent</option>
                     </select>
-                  </div>
-                  <div className="mt-3 grid gap-2 text-[11px] text-[#5a4a44] sm:grid-cols-2">
-                    {[
-                      { key: "create_listings", label: "Create listings" },
-                      { key: "add_sales", label: "Add sales" },
-                      { key: "view_inquiries", label: "View inquiries" },
-                      { key: "view_leads", label: "View leads" },
-                      { key: "manage_members", label: "Manage members" },
-                    ].map((item) => (
-                      <label
-                        key={item.key}
-                        className={`flex items-center gap-2 ${
-                          memberRole === "admin" ? "opacity-60" : ""
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={
-                            memberRole === "admin"
-                              ? true
-                              : Boolean(
-                                  (memberPerms as any)[item.key]
-                                )
-                          }
-                          onChange={(event) =>
-                            setMemberPerms((current) => ({
-                              ...current,
-                              [item.key]: event.target.checked,
-                            }))
-                          }
-                          disabled={memberRole === "admin"}
-                        />
-                        {item.label}
-                      </label>
-                    ))}
                   </div>
                   <button
                     type="button"
@@ -4397,52 +5586,15 @@ export default function VendorDashboard() {
                                     value={editingRole}
                                     onChange={(event) =>
                                       setEditingRole(
-                                        event.target.value as "admin" | "member"
+                                        event.target.value as MemberRole
                                       )
                                     }
                                     className="rounded-full border border-[#eadfce] bg-white px-2 py-1 text-[10px] text-[#5a4a44]"
                                   >
-                                    <option value="member">Member</option>
                                     <option value="admin">Admin</option>
+                                    <option value="agent">Agent</option>
                                   </select>
                                 </label>
-                              </div>
-                              <div className="flex flex-wrap gap-2 text-[10px] text-[#5a4a44]">
-                                {[
-                                  { key: "create_listings", label: "Listings" },
-                                  { key: "add_sales", label: "Sales" },
-                                  { key: "view_inquiries", label: "Inquiries" },
-                                  { key: "view_leads", label: "Leads" },
-                                  { key: "manage_members", label: "Members" },
-                                ].map((item) => (
-                                  <label
-                                    key={item.key}
-                                    className={`flex items-center gap-2 ${
-                                      editingRole === "admin"
-                                        ? "opacity-60"
-                                        : ""
-                                    }`}
-                                  >
-                                    <input
-                                      type="checkbox"
-                                      checked={
-                                        editingRole === "admin"
-                                          ? true
-                                          : Boolean(
-                                              (editingPerms as any)[item.key]
-                                            )
-                                      }
-                                      onChange={(event) =>
-                                        setEditingPerms((current) => ({
-                                          ...current,
-                                          [item.key]: event.target.checked,
-                                        }))
-                                      }
-                                      disabled={editingRole === "admin"}
-                                    />
-                                    {item.label}
-                                  </label>
-                                ))}
                               </div>
                               <div className="flex flex-wrap gap-2">
                                 <button
@@ -4556,7 +5708,7 @@ export default function VendorDashboard() {
                     />
                   )}
                 </div>
-                {pendingSalesRecords
+                {visiblePendingSales
                   .filter((sale) =>
                     searchText.pending
                       ? `${sale.id} ${sale.parcelName} ${sale.buyer}`
@@ -4580,6 +5732,11 @@ export default function VendorDashboard() {
                         <p className="mt-1 text-xs text-[#5a4a44]">
                           Buyer: {sale.buyer}
                         </p>
+                        {isPortalAdmin && (
+                          <p className="mt-1 text-[10px] text-[#7a6a63]">
+                            Sold by: {sale.createdByAgentName || "Unknown"}
+                          </p>
+                        )}
                       </div>
                       <div className="text-right text-xs">
                         <p className="text-[#1f3d2d]">
@@ -4840,7 +5997,7 @@ export default function VendorDashboard() {
                     />
                   )}
                 </div>
-                {salesRecords
+                {visibleSales
                   .filter((sale) =>
                     searchText.sales
                       ? `${sale.id} ${sale.parcelName} ${sale.buyer}`
@@ -4864,6 +6021,11 @@ export default function VendorDashboard() {
                         <p className="mt-1 text-xs text-[#5a4a44]">
                           Buyer: {sale.buyer}
                         </p>
+                        {isPortalAdmin && (
+                          <p className="mt-1 text-[10px] text-[#7a6a63]">
+                            Sold by: {sale.createdByAgentName || "Unknown"}
+                          </p>
+                        )}
                       </div>
                       <div className="text-right text-xs">
                         <p className="text-[#1f3d2d]">
@@ -4945,40 +6107,49 @@ export default function VendorDashboard() {
       </main>
 
       <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-[#eadfce] bg-white/90 px-4 py-3 text-xs backdrop-blur lg:hidden">
-        <div className="flex items-center justify-between gap-2">
-            {[
-              { id: "active", label: "Active" },
-              { id: "drafts", label: "Drafts" },
-              { id: "inquiries", label: "Inquiries" },
-              { id: "leads", label: "Leads" },
-              { id: "pending", label: "Pending" },
-              { id: "sales", label: "Sales" },
-              { id: "members", label: "Members" },
-            ].map((tab) => (
-              <button
-                key={tab.id}
-                type="button"
-                onClick={() =>
-                  handleTabChange(
-                    tab.id as
-                      | "active"
-                      | "drafts"
-                      | "inquiries"
-                      | "leads"
-                      | "pending"
-                      | "sales"
-                      | "members"
-                  )
-                }
-                className={`flex-1 rounded-full px-3 py-2 text-xs transition ${
-                  activeTab === tab.id
-                    ? "bg-[#1f3d2d] text-white"
-                    : "border border-[#eadfce] bg-white text-[#5a4a44]"
-                } ${canAccessTab(tab.id) ? "" : "opacity-60"}`}
-              >
-                {tab.label}
-              </button>
-            ))}
+        <div className="relative">
+          <div className="overflow-x-auto pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <div className="flex min-w-max items-center gap-2 pr-14">
+              {[
+                { id: "active", label: "Active" },
+                { id: "drafts", label: "Drafts" },
+                { id: "inquiries", label: "Inquiries" },
+                { id: "leads", label: "Leads" },
+                { id: "visits", label: "Visits" },
+                { id: "pending", label: "Pending" },
+                { id: "sales", label: "Sales" },
+                { id: "members", label: "Members" },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() =>
+                    handleTabChange(
+                      tab.id as
+                        | "active"
+                        | "drafts"
+                        | "inquiries"
+                        | "leads"
+                        | "visits"
+                        | "pending"
+                        | "sales"
+                        | "members"
+                    )
+                  }
+                  className={`shrink-0 rounded-full px-3 py-2 text-xs transition ${
+                    activeTab === tab.id
+                      ? "bg-[#1f3d2d] text-white"
+                      : "border border-[#eadfce] bg-white text-[#5a4a44]"
+                  } ${canAccessTab(tab.id) ? "" : "opacity-60"}`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="pointer-events-none absolute right-0 top-1/2 -translate-y-1/2 rounded-full border border-[#eadfce] bg-white/95 px-2 py-1 text-[10px] text-[#7a5f54] shadow-sm animate-pulse">
+            Scroll &gt;
+          </div>
         </div>
       </nav>
 
@@ -5464,6 +6635,231 @@ export default function VendorDashboard() {
         </div>
       )}
 
+      {selectedLeadId && (
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6">
+          <div className="w-full max-w-xl max-h-[90vh] overflow-y-auto rounded-3xl border border-[#eadfce] bg-[#fbf8f3] p-6 shadow-[0_30px_70px_-40px_rgba(20,17,15,0.6)]">
+            {(() => {
+              const lead = inquiries.find((item) => item.id === selectedLeadId);
+              if (!lead) {
+                return (
+                  <div className="space-y-3 text-sm text-[#5a4a44]">
+                    <p>Lead not found.</p>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedLeadId(null)}
+                      className="rounded-full border border-[#eadfce] px-3 py-1 text-xs"
+                    >
+                      Close
+                    </button>
+                  </div>
+                );
+              }
+              return (
+                <>
+                  <div className="flex items-start justify-between">
+                    <div>
+                      <p className="text-xs uppercase tracking-[0.35em] text-[#a67047]">
+                        Lead progress
+                      </p>
+                      <p className="mt-2 font-serif text-xl text-[#14110f]">
+                        {lead.buyer} - {lead.parcel}
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedLeadId(null)}
+                      className="rounded-full border border-[#eadfce] px-3 py-1 text-xs text-[#5a4a44]"
+                    >
+                      Close
+                    </button>
+                  </div>
+
+                  <div className="mt-4 space-y-2 text-xs text-[#5a4a44]">
+                    <p>Phone: {lead.phone}</p>
+                    <p>Assigned to: {lead.assignedAgentName || "Unassigned"}</p>
+                    <p>
+                      Responded by: {lead.respondedByName || "Not recorded"}
+                      {lead.respondedAt ? ` (${lead.respondedAt})` : ""}
+                    </p>
+                    {lead.nextFollowUpAt && (
+                      <p>Next follow-up: {new Date(lead.nextFollowUpAt).toLocaleString()}</p>
+                    )}
+                  </div>
+
+                  <div className="mt-4 rounded-2xl border border-[#eadfce] bg-white px-4 py-3">
+                    <div className="rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-3 py-2 text-[11px]">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-[10px] uppercase tracking-[0.2em] text-[#a67047]">
+                          AI suggestions
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => generateLeadAiSuggestions(lead)}
+                          className="rounded-full border border-[#eadfce] px-3 py-1 text-[10px]"
+                        >
+                          {leadAiLoading[lead.id] ? "Generating..." : "Refresh"}
+                        </button>
+                      </div>
+                      {leadAiSuggestions[lead.id] ? (
+                        <div className="mt-2 space-y-2 text-[#5a4a44]">
+                          <p>
+                            Next step:{" "}
+                            <span className="text-[#14110f]">
+                              {leadAiSuggestions[lead.id].nextSteps[0] || "Follow up with personalized update."}
+                            </span>
+                          </p>
+                          {leadAiSuggestions[lead.id].messageSuggestions.length > 0 && (
+                            <div>
+                              <p className="text-[10px] uppercase tracking-[0.2em] text-[#a67047]">
+                                Suggested texts
+                              </p>
+                              <div className="mt-1 space-y-1">
+                                {leadAiSuggestions[lead.id].messageSuggestions
+                                  .slice(0, 2)
+                                  .map((text, index) => (
+                                    <p key={`${lead.id}-msg-${index}`} className="rounded-xl border border-[#eadfce] bg-white px-2 py-1">
+                                      {text}
+                                    </p>
+                                  ))}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      ) : (
+                        <p className="mt-2 text-[#7a6a63]">
+                          Generate lead-specific next steps and text suggestions.
+                        </p>
+                      )}
+                    </div>
+                    <p className="text-[10px] uppercase tracking-[0.25em] text-[#a67047]">
+                      Conversation progress
+                    </p>
+                    <div className="mt-3 space-y-2">
+                      {(lead.progressLogs ?? []).length > 0 ? (
+                        (lead.progressLogs ?? []).map((entry) => (
+                          <div
+                            key={entry.id}
+                            className="rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-3 py-2 text-[11px]"
+                          >
+                            <p className="text-[#14110f]">{entry.note}</p>
+                            <p className="mt-1 text-[10px] text-[#7a6a63]">
+                              {entry.byName} - {entry.at}
+                              {entry.kind ? ` - ${entry.kind.replace("_", " ")}` : ""}
+                              {entry.channel ? ` - ${entry.channel}` : ""}
+                              {entry.nextFollowUpAt
+                                ? ` - next: ${new Date(entry.nextFollowUpAt).toLocaleString()}`
+                                : ""}
+                            </p>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="text-[11px] text-[#7a6a63]">
+                          No progress updates yet.
+                        </p>
+                      )}
+                    </div>
+                    <textarea
+                      value={leadProgressNote}
+                      onChange={(event) => setLeadProgressNote(event.target.value)}
+                      placeholder="Example: Visited site with customer; requested payment plan."
+                      className="mt-3 min-h-[90px] w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                    />
+                    <div className="mt-3 grid gap-2 md:grid-cols-2">
+                      <select
+                        value={leadProgressKind}
+                        onChange={(event) =>
+                          setLeadProgressKind(
+                            event.target.value as
+                              | "call"
+                              | "site_visit"
+                              | "offer"
+                              | "objection"
+                              | "follow_up"
+                          )
+                        }
+                        className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                      >
+                        <option value="follow_up">Follow-up</option>
+                        <option value="call">Call</option>
+                        <option value="site_visit">Site visit</option>
+                        <option value="offer">Offer</option>
+                        <option value="objection">Objection</option>
+                      </select>
+                      <select
+                        value={leadReminderChannel}
+                        onChange={(event) =>
+                          setLeadReminderChannel(
+                            event.target.value as "Call" | "WhatsApp" | "SMS" | "Email"
+                          )
+                        }
+                        className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                      >
+                        <option value="WhatsApp">WhatsApp</option>
+                        <option value="SMS">SMS</option>
+                        <option value="Email">Email</option>
+                        <option value="Call">Call</option>
+                      </select>
+                      <input
+                        type="datetime-local"
+                        value={leadNextFollowUpAt}
+                        onChange={(event) => setLeadNextFollowUpAt(event.target.value)}
+                        className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                      />
+                      <input
+                        type="datetime-local"
+                        value={leadReminderAt}
+                        onChange={(event) => setLeadReminderAt(event.target.value)}
+                        className="rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-sm text-[#14110f]"
+                      />
+                    </div>
+                    {(lead.reminders ?? []).length > 0 && (
+                      <div className="mt-3 rounded-2xl border border-[#eadfce] bg-[#fbf8f3] px-3 py-2 text-[11px]">
+                        <p className="text-[10px] uppercase tracking-[0.2em] text-[#a67047]">
+                          Scheduled reminders
+                        </p>
+                        <div className="mt-2 space-y-1 text-[#5a4a44]">
+                          {(lead.reminders ?? []).map((reminder) => (
+                            <p key={reminder.id}>
+                              {reminder.channel} - {new Date(reminder.scheduledAt).toLocaleString()} -{" "}
+                              {reminder.status === "sent" ? "sent" : "scheduled"}
+                            </p>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={logLeadProgress}
+                        disabled={leadProgressSaving}
+                        className="rounded-full bg-[#1f3d2d] px-4 py-2 text-[11px] font-semibold text-white disabled:opacity-60"
+                      >
+                        {leadProgressSaving ? "Saving..." : "Save progress"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={markLeadSuccessful}
+                        disabled={
+                          leadStatusSaving ||
+                          (lead.status ?? "responded") === "successful"
+                        }
+                        className="rounded-full border border-[#1f3d2d] bg-white px-4 py-2 text-[11px] font-semibold text-[#1f3d2d] disabled:opacity-60"
+                      >
+                        {leadStatusSaving
+                          ? "Updating..."
+                          : (lead.status ?? "responded") === "successful"
+                          ? "Marked successful"
+                          : "Mark lead successful"}
+                      </button>
+                    </div>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
       {newListingOpen && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6">
           <div className="w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-3xl border border-[#eadfce] bg-[#fbf8f3] p-6 shadow-[0_30px_70px_-40px_rgba(20,17,15,0.6)]">
@@ -5927,7 +7323,7 @@ export default function VendorDashboard() {
                     <button
                       type="button"
                       onClick={runAnchorSearch}
-                      disabled={!mapboxToken || anchorSearchLoading}
+                      disabled={!anchorSearchQuery.trim() || anchorSearchLoading}
                       className="rounded-full bg-[#1f3d2d] px-3 py-2 text-[10px] font-semibold text-white disabled:opacity-60"
                     >
                       {anchorSearchLoading ? "..." : "Go"}
@@ -5946,11 +7342,11 @@ export default function VendorDashboard() {
                           type="button"
                           onClick={() => {
                             setAnchorSearchResults([]);
-                            anchorMapInstanceRef.current?.flyTo({
-                              center: result.center,
-                              zoom: 16,
-                              duration: 800,
+                            anchorMapInstanceRef.current?.setCenter({
+                              lat: result.center[1],
+                              lng: result.center[0],
                             });
+                            anchorMapInstanceRef.current?.setZoom(16);
                           }}
                           className="block w-full border-b border-[#f1e6d7] px-3 py-2 text-left text-[10px] text-[#5a4a44] hover:bg-[#fbf8f3]"
                         >
@@ -5959,11 +7355,9 @@ export default function VendorDashboard() {
                       ))}
                     </div>
                   )}
-                  {!mapboxToken && (
-                    <p className="mt-2 text-[10px] text-[#7a5f54]">
-                      Add Mapbox token to search.
-                    </p>
-                  )}
+                  <p className="mt-2 text-[10px] text-[#7a5f54]">
+                    Search uses Google Maps geocoding.
+                  </p>
                 </div>
                 <div ref={anchorMapRef} className="h-full w-full" />
               </div>
@@ -6030,7 +7424,7 @@ export default function VendorDashboard() {
                     <button
                       type="button"
                       onClick={runMapSearch}
-                      disabled={!mapboxToken || mapSearchLoading}
+                      disabled={!mapSearchQuery.trim() || mapSearchLoading}
                       className="rounded-full bg-[#1f3d2d] px-3 py-2 text-[10px] font-semibold text-white disabled:opacity-60"
                     >
                       {mapSearchLoading ? "..." : "Go"}
@@ -6049,11 +7443,11 @@ export default function VendorDashboard() {
                           type="button"
                           onClick={() => {
                             setMapSearchResults([]);
-                            mapPreviewInstanceRef.current?.flyTo({
-                              center: result.center,
-                              zoom: 16,
-                              duration: 800,
+                            mapPreviewInstanceRef.current?.setCenter({
+                              lat: result.center[1],
+                              lng: result.center[0],
                             });
+                            mapPreviewInstanceRef.current?.setZoom(16);
                           }}
                           className="block w-full border-b border-[#f1e6d7] px-3 py-2 text-left text-[10px] text-[#5a4a44] hover:bg-[#fbf8f3]"
                         >
@@ -6062,11 +7456,9 @@ export default function VendorDashboard() {
                       ))}
                     </div>
                   )}
-                  {!mapboxToken && (
-                    <p className="mt-2 text-[10px] text-[#7a5f54]">
-                      Add Mapbox token to search.
-                    </p>
-                  )}
+                  <p className="mt-2 text-[10px] text-[#7a5f54]">
+                    Search uses Google Maps geocoding.
+                  </p>
                 </div>
                 <div ref={mapPreviewRef} className="h-full w-full" />
               </div>

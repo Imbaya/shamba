@@ -1,4 +1,4 @@
-const CACHE_NAME = "plottrust-v1";
+const CACHE_NAME = "plottrust-v2";
 const OFFLINE_URL = "/offline.html";
 
 const PRECACHE_ASSETS = ["/", OFFLINE_URL, "/manifest.webmanifest", "/icon.svg", "/maskable-icon.svg"];
@@ -34,6 +34,8 @@ self.addEventListener("fetch", (event) => {
 
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
+  if (url.pathname.startsWith("/_next/")) return;
+  if (url.pathname.startsWith("/api/")) return;
 
   if (request.mode === "navigate") {
     event.respondWith(
