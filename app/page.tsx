@@ -11,10 +11,43 @@ export default function Home() {
   const router = useRouter();
   const [remotePlots, setRemotePlots] = useState<Plot[]>([]);
   const [hydrated, setHydrated] = useState(false);
+  const [isMobileViewport, setIsMobileViewport] = useState(false);
+  const [mobileMapOffset, setMobileMapOffset] = useState(136);
   const plots: Plot[] = [];
 
   useEffect(() => {
     setHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    const updateViewportSizing = () => {
+      const viewportWidth = window.innerWidth;
+      const viewportHeight = window.innerHeight;
+      const mobile = viewportWidth < 768;
+      setIsMobileViewport(mobile);
+      if (!mobile) return;
+
+      // Tune chrome/header allowance by device height for tighter fit on small screens.
+      let offset = 136;
+      if (viewportHeight <= 680) {
+        offset = 106; // iPhone SE and similar compact devices
+      } else if (viewportHeight <= 740) {
+        offset = 114;
+      } else if (viewportHeight <= 820) {
+        offset = 122;
+      } else {
+        offset = 130;
+      }
+      setMobileMapOffset(offset);
+    };
+
+    updateViewportSizing();
+    window.addEventListener("resize", updateViewportSizing);
+    window.addEventListener("orientationchange", updateViewportSizing);
+    return () => {
+      window.removeEventListener("resize", updateViewportSizing);
+      window.removeEventListener("orientationchange", updateViewportSizing);
+    };
   }, []);
 
   useEffect(() => {
@@ -299,8 +332,8 @@ export default function Home() {
   };
 
   return (
-    <div className="min-h-screen overflow-x-hidden bg-[radial-gradient(circle_at_12%_10%,_rgba(209,167,65,0.22),_transparent_28%),radial-gradient(circle_at_88%_12%,_rgba(74,160,255,0.2),_transparent_34%),linear-gradient(120deg,_#050b1a_0%,_#07122a_45%,_#091631_100%)] text-[#e8eefc]">
-      <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-5 sm:flex-nowrap sm:px-6 sm:py-6">
+    <div className="h-[100dvh] overflow-hidden bg-[radial-gradient(circle_at_12%_10%,_rgba(209,167,65,0.22),_transparent_28%),radial-gradient(circle_at_88%_12%,_rgba(74,160,255,0.2),_transparent_34%),linear-gradient(120deg,_#050b1a_0%,_#07122a_45%,_#091631_100%)] text-[#e8eefc] md:min-h-screen md:h-auto md:overflow-x-hidden">
+      <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-4 sm:flex-nowrap sm:px-6 sm:py-6">
         <div className="flex min-w-0 items-center gap-3">
           <div
             className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-2xl bg-[#0d1f3f]"
@@ -336,7 +369,7 @@ export default function Home() {
           </button>
         </div>
       </div>
-      <div className="mx-auto grid max-w-6xl grid-cols-3 items-stretch gap-2 px-4 pb-4 sm:px-6 md:hidden">
+      <div className="mx-auto grid max-w-6xl grid-cols-3 items-stretch gap-2 px-4 pb-2 sm:px-6 md:hidden">
         <button
           className="w-full rounded-full border border-[#4a78c7]/60 bg-[#09142b]/70 px-2 py-2 text-[11px] font-semibold leading-tight text-[#cfe1ff] transition hover:border-[#6f9df0]"
           onClick={() => setFiltersOpen(true)}
@@ -357,7 +390,10 @@ export default function Home() {
         </button>
       </div>
 
-      <main className="mx-auto grid max-w-7xl gap-6 px-4 pb-12 pt-2 sm:gap-8 sm:px-6 sm:pb-16 sm:pt-4 lg:grid-cols-[260px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)] lg:items-start">
+      <main
+        className="mx-auto grid max-w-7xl gap-4 px-4 pb-0 pt-1 sm:gap-8 sm:px-6 sm:pt-4 md:h-auto md:pb-16 lg:grid-cols-[260px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)] lg:items-start"
+        style={isMobileViewport ? { height: `calc(100dvh - ${mobileMapOffset}px)` } : undefined}
+      >
         <section className="order-2 hidden min-h-[720px] flex-col rounded-3xl border border-[#284675] bg-[#09142b]/82 p-5 shadow-[0_25px_70px_-45px_rgba(0,0,0,0.9)] backdrop-blur lg:order-1 lg:flex">
           <p className="text-xs uppercase tracking-[0.35em] text-[#d1a741]">
             Live map
@@ -489,7 +525,7 @@ export default function Home() {
           </div>
         </section>
 
-        <section className="relative order-1 min-w-0 lg:order-2">
+        <section className="relative order-1 min-w-0 h-full lg:order-2">
           <MapboxMap
             plots={filteredPlots.map((plot) => ({
               id: plot.id,
@@ -513,6 +549,7 @@ export default function Home() {
               manualParcelOverlays: plot.manualParcelOverlays,
             }))}
             onFiltersClick={() => setFiltersOpen(true)}
+            compactMobile
           />
 
           <div className="pointer-events-none absolute left-3 top-3 max-w-[calc(100%-1.5rem)] truncate rounded-full bg-white/80 px-3 py-1 text-[11px] font-semibold text-[#1f3d2d] backdrop-blur sm:left-6 sm:top-6 sm:max-w-none sm:text-xs">
@@ -660,7 +697,7 @@ export default function Home() {
         </section>
       </main>
 
-      <div className="border-t border-[#284675] px-4 py-6 text-xs text-[#95add8] sm:px-6" />
+      <div className="hidden border-t border-[#284675] px-4 py-6 text-xs text-[#95add8] sm:px-6 md:block" />
 
       {signupOpen && (
         <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 px-4 py-6">

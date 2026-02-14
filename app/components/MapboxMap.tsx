@@ -62,6 +62,7 @@ export type Plot = {
 type MapboxMapProps = {
   plots: Plot[];
   onFiltersClick?: () => void;
+  compactMobile?: boolean;
 };
 
 type OverlayPoint = { x: number; y: number };
@@ -78,7 +79,11 @@ type EssentialLayerKey =
   | "water"
   | "power";
 
-export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
+export default function MapboxMap({
+  plots,
+  onFiltersClick,
+  compactMobile = false,
+}: MapboxMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapsMap | null>(null);
   const mapsApiRef = useRef<GoogleMapsApi | null>(null);
@@ -823,8 +828,12 @@ export default function MapboxMap({ plots, onFiltersClick }: MapboxMapProps) {
     mapRef.current.setHeading?.(is3D ? -12 : 0);
   }, [is3D]);
 
+  const mapShellClass = compactMobile
+    ? "relative h-full min-h-0 w-full overflow-hidden rounded-[20px] border border-[#284675] bg-[#08152f] shadow-[0_35px_80px_-50px_rgba(0,0,0,0.9)] md:h-[760px] md:min-h-[640px] md:rounded-[32px]"
+    : "relative h-[84vh] min-h-[620px] w-full overflow-hidden rounded-[20px] border border-[#284675] bg-[#08152f] shadow-[0_35px_80px_-50px_rgba(0,0,0,0.9)] sm:h-[76vh] sm:min-h-[640px] md:h-[760px] md:rounded-[32px]";
+
   return (
-    <div className="relative h-[84vh] min-h-[620px] w-full overflow-hidden rounded-[20px] border border-[#284675] bg-[#08152f] shadow-[0_35px_80px_-50px_rgba(0,0,0,0.9)] sm:h-[76vh] sm:min-h-[640px] md:h-[760px] md:rounded-[32px]">
+    <div className={mapShellClass}>
       <div className="absolute left-3 top-3 z-10 flex flex-wrap gap-2 rounded-full border border-[#284675] bg-[#08152f]/85 px-2 py-2 text-[10px] font-semibold text-[#d6e5ff] shadow-sm backdrop-blur sm:left-5 sm:top-5 sm:px-3 sm:py-2 sm:text-xs">
         <button
           type="button"
