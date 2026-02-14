@@ -382,11 +382,11 @@ export default function Home() {
             </p>
             <div className="mt-3 space-y-3 text-xs text-[#c6d6f7]">
               <div>
-                <p className="text-[11px] font-semibold text-[#14110f]">
+                <p className="text-[11px] font-semibold text-[#e8eefc]">
                   Vendor
                 </p>
                 <select
-                  className="mt-2 w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-xs text-[#14110f]"
+                  className="mt-2 w-full rounded-2xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-xs text-[#e8eefc]"
                   value={selectedVendor}
                   onChange={(event) => setSelectedVendor(event.target.value)}
                 >
@@ -397,7 +397,7 @@ export default function Home() {
                 </select>
               </div>
               <div>
-                <p className="text-[11px] font-semibold text-[#14110f]">
+                <p className="text-[11px] font-semibold text-[#e8eefc]">
                   Vendor type
                 </p>
                 <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
@@ -420,7 +420,7 @@ export default function Home() {
                 </div>
               </div>
               <div>
-                <p className="text-[11px] font-semibold text-[#14110f]">
+                <p className="text-[11px] font-semibold text-[#e8eefc]">
                   Amenities stated by vendor
                 </p>
                 <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
@@ -450,7 +450,7 @@ export default function Home() {
                 </div>
               </div>
               <div>
-                <p className="text-[11px] font-semibold text-[#14110f]">Price range (Ksh)</p>
+                <p className="text-[11px] font-semibold text-[#e8eefc]">Price range (Ksh)</p>
                 <div className="mt-2 grid grid-cols-2 gap-2">
                   <input
                     type="number"
@@ -458,7 +458,7 @@ export default function Home() {
                     value={minPriceFilter}
                     onChange={(event) => setMinPriceFilter(event.target.value)}
                     placeholder="Min"
-                    className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-xs text-[#14110f]"
+                    className="w-full rounded-2xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-xs text-[#e8eefc] placeholder:text-[#95add8]"
                   />
                   <input
                     type="number"
@@ -466,7 +466,7 @@ export default function Home() {
                     value={maxPriceFilter}
                     onChange={(event) => setMaxPriceFilter(event.target.value)}
                     placeholder="Max"
-                    className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-xs text-[#14110f]"
+                    className="w-full rounded-2xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-xs text-[#e8eefc] placeholder:text-[#95add8]"
                   />
                 </div>
               </div>
@@ -479,7 +479,7 @@ export default function Home() {
                   setMinPriceFilter("");
                   setMaxPriceFilter("");
                 }}
-                className="rounded-full border border-[#eadfce] px-3 py-2 text-[11px] text-[#5a4a44]"
+                className="rounded-full border border-[#365a94] px-3 py-2 text-[11px] text-[#d6e5ff]"
               >
                 Clear filters
               </button>
@@ -519,26 +519,26 @@ export default function Home() {
 
           {filtersOpen && (
             <div className="absolute inset-0 z-20 flex items-start justify-center bg-black/30 px-4 py-6 lg:hidden">
-              <div className="relative w-full max-w-md max-h-[85vh] overflow-y-auto rounded-3xl border border-[#eadfce] bg-[#fbf8f3] p-5 shadow-[0_20px_60px_-40px_rgba(20,17,15,0.5)]">
+              <div className="relative w-full max-w-md max-h-[85vh] overflow-y-auto rounded-3xl border border-[#284675] bg-[#0a1834]/95 p-5 shadow-[0_20px_60px_-40px_rgba(0,0,0,0.9)]">
                 <div className="flex items-center justify-between">
-                  <p className="text-xs uppercase tracking-[0.35em] text-[#a67047]">
+                  <p className="text-xs uppercase tracking-[0.35em] text-[#d1a741]">
                     Filters
                   </p>
                   <button
                     type="button"
                     onClick={() => setFiltersOpen(false)}
-                    className="rounded-full border border-[#eadfce] px-3 py-1 text-xs text-[#5a4a44]"
+                    className="rounded-full border border-[#365a94] px-3 py-1 text-xs text-[#d6e5ff]"
                   >
                     Close
                   </button>
                 </div>
-                <div className="mt-4 space-y-4 text-xs text-[#4b3b35]">
+                <div className="mt-4 space-y-4 text-xs text-[#c6d6f7]">
                   <div>
-                    <p className="text-[11px] font-semibold text-[#14110f]">
+                    <p className="text-[11px] font-semibold text-[#e8eefc]">
                       Vendor
                     </p>
                     <select
-                      className="mt-2 w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-xs text-[#14110f]"
+                      className="mt-2 w-full rounded-2xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-xs text-[#e8eefc]"
                       value={selectedVendor}
                       onChange={(event) =>
                         setSelectedVendor(event.target.value)
@@ -551,7 +551,7 @@ export default function Home() {
                     </select>
                   </div>
                   <div>
-                    <p className="text-[11px] font-semibold text-[#14110f]">
+                    <p className="text-[11px] font-semibold text-[#e8eefc]">
                       Vendor type
                     </p>
                     <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
@@ -576,7 +576,7 @@ export default function Home() {
                     </div>
                   </div>
                   <div>
-                    <p className="text-[11px] font-semibold text-[#14110f]">
+                    <p className="text-[11px] font-semibold text-[#e8eefc]">
                       Amenities stated by vendor
                     </p>
                     <div className="mt-2 flex flex-wrap gap-2 text-[11px]">
@@ -606,7 +606,7 @@ export default function Home() {
                     </div>
                   </div>
                   <div>
-                    <p className="text-[11px] font-semibold text-[#14110f]">
+                    <p className="text-[11px] font-semibold text-[#e8eefc]">
                       Price range (Ksh)
                     </p>
                     <div className="mt-2 grid grid-cols-2 gap-2">
@@ -616,7 +616,7 @@ export default function Home() {
                         value={minPriceFilter}
                         onChange={(event) => setMinPriceFilter(event.target.value)}
                         placeholder="Min"
-                        className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-xs text-[#14110f]"
+                        className="w-full rounded-2xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-xs text-[#e8eefc] placeholder:text-[#95add8]"
                       />
                       <input
                         type="number"
@@ -624,7 +624,7 @@ export default function Home() {
                         value={maxPriceFilter}
                         onChange={(event) => setMaxPriceFilter(event.target.value)}
                         placeholder="Max"
-                        className="w-full rounded-2xl border border-[#eadfce] bg-white px-3 py-2 text-xs text-[#14110f]"
+                        className="w-full rounded-2xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-xs text-[#e8eefc] placeholder:text-[#95add8]"
                       />
                     </div>
                   </div>
@@ -638,14 +638,14 @@ export default function Home() {
                         setMinPriceFilter("");
                         setMaxPriceFilter("");
                       }}
-                      className="rounded-full border border-[#eadfce] px-3 py-2 text-[11px] text-[#5a4a44]"
+                      className="rounded-full border border-[#365a94] px-3 py-2 text-[11px] text-[#d6e5ff]"
                     >
                       Clear filters
                     </button>
                     <button
                       type="button"
                       onClick={() => setFiltersOpen(false)}
-                      className="rounded-full bg-[#1f3d2d] px-4 py-2 text-[11px] text-white"
+                      className="rounded-full bg-[#d1a741] px-4 py-2 text-[11px] text-[#091631]"
                     >
                       Apply
                     </button>
