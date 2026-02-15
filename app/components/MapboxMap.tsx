@@ -63,6 +63,7 @@ type MapboxMapProps = {
   plots: Plot[];
   onFiltersClick?: () => void;
   compactMobile?: boolean;
+  autoOpenPlotId?: string | null;
 };
 
 type OverlayPoint = { x: number; y: number };
@@ -83,6 +84,7 @@ export default function MapboxMap({
   plots,
   onFiltersClick,
   compactMobile = false,
+  autoOpenPlotId = null,
 }: MapboxMapProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapsMap | null>(null);
@@ -194,6 +196,31 @@ export default function MapboxMap({
   };
   const formatDistance = (km: number) =>
     km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(km >= 10 ? 1 : 2)} km`;
+  const shareListingLink = async (plotId: string) => {
+    if (typeof window === "undefined") return;
+    const url = new URL(window.location.href);
+    url.pathname = "/";
+    url.search = "";
+    url.searchParams.set("listing", plotId);
+    const shareUrl = url.toString();
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: "PlotTrust listing",
+          text: "View this listing on PlotTrust.",
+          url: shareUrl,
+        });
+        return;
+      }
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareUrl);
+        return;
+      }
+      window.prompt("Copy this listing link:", shareUrl);
+    } catch {
+      // user cancelled or share unsupported
+    }
+  };
   const visiblePlots = useMemo(
     () => (activePlot ? [activePlot] : plots),
     [activePlot, plots]
@@ -666,6 +693,22 @@ export default function MapboxMap({
       { enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
     );
   }, [mapReady]);
+
+  useEffect(() => {
+    if (!autoOpenPlotId) return;
+    const sharedPlot = plots.find((plot) => plot.id === autoOpenPlotId);
+    if (!sharedPlot) return;
+    setActivePlot((current) =>
+      current?.id === sharedPlot.id ? current : sharedPlot
+    );
+    if (mapRef.current) {
+      mapRef.current.setCenter({
+        lat: sharedPlot.center[1],
+        lng: sharedPlot.center[0],
+      });
+      mapRef.current.setZoom(16);
+    }
+  }, [autoOpenPlotId, plots, mapReady]);
 
   useEffect(() => {
     const maps = mapsApiRef.current;
@@ -1221,6 +1264,13 @@ export default function MapboxMap({
           <div className="mt-2 rounded-2xl border border-[#365a94] bg-[#0d1f3f] p-3">
             <button
               type="button"
+              onClick={() => shareListingLink(activePlot.id)}
+              className="w-full rounded-full bg-[#2454a0] px-3 py-2 text-[11px] font-semibold text-white"
+            >
+              Share listing
+            </button>
+            <button
+              type="button"
               onClick={() => {
                 const destination = `${activePlot.center[1]},${activePlot.center[0]}`;
                 const url = `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(
@@ -1228,13 +1278,13 @@ export default function MapboxMap({
                 )}`;
                 window.open(url, "_blank", "noopener,noreferrer");
               }}
-              className="w-full rounded-full border border-[#365a94] bg-[#091631] px-3 py-2 text-[11px] font-semibold text-[#dce8ff]"
+              className="mt-2 w-full rounded-full border border-[#365a94] bg-[#091631] px-3 py-2 text-[11px] font-semibold text-[#dce8ff]"
             >
               Share to Maps
             </button>
             <p className="mt-2 text-[10px] text-[#9eb6e1]">
-              Share parcel location to Google Maps to get directions for accessing
-              this parcel.
+              Share this listing link or open parcel location in Google Maps for
+              directions.
             </p>
           </div>
           {!inquiryOpen ? (

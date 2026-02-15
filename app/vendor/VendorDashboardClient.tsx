@@ -141,6 +141,19 @@ type Inquiry = {
     note?: string;
     sentAt?: string;
   }[];
+  pipelineStage?:
+    | "new"
+    | "qualified"
+    | "visit_scheduled"
+    | "offer_made"
+    | "negotiation"
+    | "won"
+    | "lost";
+  financingReady?: "yes" | "no" | "unknown";
+  prequalStatus?: "not_started" | "in_review" | "qualified" | "not_qualified";
+  budgetRange?: string;
+  monthlyIncome?: number;
+  prequalScore?: number;
 };
 
 type VisitRequest = {
@@ -165,6 +178,71 @@ type LeadAiSuggestion = {
   messageSuggestions: string[];
   riskLevel: "low" | "medium" | "high";
   rationale: string;
+};
+
+type WorkspaceCopilotSuggestion = {
+  title: string;
+  reason: string;
+  ctaTab?:
+    | "active"
+    | "drafts"
+    | "inquiries"
+    | "leads"
+    | "visits"
+    | "pending"
+    | "sales"
+    | "members";
+  ctaEntityId?: string;
+};
+
+type WorkspaceCopilotPayload = {
+  focus: string;
+  actions: WorkspaceCopilotSuggestion[];
+  risks: string[];
+  coachTip: string;
+};
+
+type AssignmentMode = "least_load" | "round_robin" | "random";
+
+type OpsConfig = {
+  assignmentMode: AssignmentMode;
+  vipKeyword: string;
+  responseReminderHours: number;
+  inquiryReassignHours: number;
+  leadUpdateReminderHours: number;
+  leadUpdateReassignHours: number;
+  activeStartHour: number;
+  activeEndHour: number;
+  agentCommissionPct: number;
+  managerCommissionPct: number;
+};
+
+type AuditLogEntry = {
+  id: string;
+  action: string;
+  entityType: "inquiry" | "lead" | "member" | "sale" | "portal";
+  entityId: string;
+  actorId: string;
+  actorName: string;
+  details?: string;
+  createdAtLabel: string;
+};
+
+type CommissionPayout = {
+  id: string;
+  agentId: string;
+  agentName: string;
+  amount: number;
+  createdAtLabel: string;
+  paidByName: string;
+};
+
+type LeakageAlert = {
+  id: string;
+  severity: "high" | "medium" | "low";
+  title: string;
+  detail: string;
+  entityId?: string;
 };
 
 const inquiriesSeed: Inquiry[] = [];
@@ -203,42 +281,42 @@ const permissionsForRole = (role: MemberRole): MemberPermissions =>
 
 const BUSINESS_START_HOUR = 8;
 const BUSINESS_END_HOUR = 17;
-const INQUIRY_REASSIGN_AFTER_MS = 2 * 60 * 60 * 1000;
-const SLA_RESPONSE_REMINDER_MS = 60 * 60 * 1000;
-const SLA_UPDATE_REMINDER_MS = 4 * 60 * 60 * 1000;
-const SLA_UPDATE_REASSIGN_MS = 8 * 60 * 60 * 1000;
+const DEFAULT_OPS_CONFIG: OpsConfig = {
+  assignmentMode: "least_load",
+  vipKeyword: "vip",
+  responseReminderHours: 1,
+  inquiryReassignHours: 2,
+  leadUpdateReminderHours: 4,
+  leadUpdateReassignHours: 8,
+  activeStartHour: BUSINESS_START_HOUR,
+  activeEndHour: BUSINESS_END_HOUR,
+  agentCommissionPct: 3,
+  managerCommissionPct: 1,
+};
 
-const pickBalancedAgent = (
-  agents: { id: string; name: string; email: string }[],
-  inquiryPool: Inquiry[]
+const isWithinBusinessHoursRange = (
+  date: Date,
+  startHour: number,
+  endHour: number
 ) => {
-  if (!agents.length) return null;
-  const counts = new Map<string, number>(agents.map((agent) => [agent.id, 0]));
-  inquiryPool.forEach((item) => {
-    if ((item.status ?? "new") === "successful") return;
-    if (!item.assignedAgentId) return;
-    if (!counts.has(item.assignedAgentId)) return;
-    counts.set(item.assignedAgentId, (counts.get(item.assignedAgentId) ?? 0) + 1);
-  });
-  const minimumLoad = Math.min(...Array.from(counts.values()));
-  const eligible = agents.filter((agent) => (counts.get(agent.id) ?? 0) === minimumLoad);
-  return eligible[Math.floor(Math.random() * eligible.length)];
-};
-
-const isWithinBusinessHours = (date: Date) => {
   const hour = date.getHours();
-  return hour >= BUSINESS_START_HOUR && hour < BUSINESS_END_HOUR;
+  return hour >= startHour && hour < endHour;
 };
 
-const getBusinessElapsedMs = (start: Date, end: Date) => {
+const getBusinessElapsedMsRange = (
+  start: Date,
+  end: Date,
+  startHour: number,
+  endHour: number
+) => {
   if (end <= start) return 0;
   let total = 0;
   let cursor = new Date(start);
   while (cursor < end) {
     const dayStart = new Date(cursor);
-    dayStart.setHours(BUSINESS_START_HOUR, 0, 0, 0);
+    dayStart.setHours(startHour, 0, 0, 0);
     const dayEnd = new Date(cursor);
-    dayEnd.setHours(BUSINESS_END_HOUR, 0, 0, 0);
+    dayEnd.setHours(endHour, 0, 0, 0);
     const segmentStart = new Date(Math.max(cursor.getTime(), dayStart.getTime()));
     const segmentEnd = new Date(Math.min(end.getTime(), dayEnd.getTime()));
     if (segmentEnd > segmentStart) {
@@ -418,6 +496,13 @@ export default function VendorDashboard() {
     Record<string, LeadAiSuggestion>
   >({});
   const [leadAiLoading, setLeadAiLoading] = useState<Record<string, boolean>>({});
+  const [workspaceCopilot, setWorkspaceCopilot] =
+    useState<WorkspaceCopilotPayload | null>(null);
+  const [workspaceCopilotLoading, setWorkspaceCopilotLoading] = useState(false);
+  const [workspaceCopilotError, setWorkspaceCopilotError] = useState<string | null>(
+    null
+  );
+  const [showAdvancedLeadOps, setShowAdvancedLeadOps] = useState(false);
   const [manualLeadName, setManualLeadName] = useState("");
   const [manualLeadPhone, setManualLeadPhone] = useState("");
   const [manualLeadParcel, setManualLeadParcel] = useState("");
@@ -436,6 +521,21 @@ export default function VendorDashboard() {
   const [leadReminderAt, setLeadReminderAt] = useState("");
   const [leadProgressSaving, setLeadProgressSaving] = useState(false);
   const [leadStatusSaving, setLeadStatusSaving] = useState(false);
+  const [leadStageSaving, setLeadStageSaving] = useState(false);
+  const [leadPipelineStage, setLeadPipelineStage] = useState<
+    Inquiry["pipelineStage"]
+  >("qualified");
+  const [financeBudget, setFinanceBudget] = useState("");
+  const [financeIncome, setFinanceIncome] = useState("");
+  const [financeReady, setFinanceReady] = useState<"yes" | "no" | "unknown">(
+    "unknown"
+  );
+  const [prequalStatus, setPrequalStatus] = useState<
+    "not_started" | "in_review" | "qualified" | "not_qualified"
+  >("not_started");
+  const [prequalSaving, setPrequalSaving] = useState(false);
+  const [collectionsStatus, setCollectionsStatus] = useState<string | null>(null);
+  const [payrollStatus, setPayrollStatus] = useState<string | null>(null);
   const [installmentDrafts, setInstallmentDrafts] = useState<
     Record<
       string,
@@ -627,6 +727,25 @@ export default function VendorDashboard() {
   const [editingMemberId, setEditingMemberId] = useState<string | null>(null);
   const [editingRole, setEditingRole] = useState<MemberRole>("agent");
   const [memberUpdating, setMemberUpdating] = useState(false);
+  const [opsConfig, setOpsConfig] = useState<OpsConfig>(DEFAULT_OPS_CONFIG);
+  const [opsConfigSaving, setOpsConfigSaving] = useState(false);
+  const [opsConfigStatus, setOpsConfigStatus] = useState<string | null>(null);
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
+  const [commissionPayouts, setCommissionPayouts] = useState<CommissionPayout[]>([]);
+  const [commissionActionStatus, setCommissionActionStatus] = useState<string | null>(
+    null
+  );
+  const [commissionPayingAgentId, setCommissionPayingAgentId] = useState<
+    string | null
+  >(null);
+  const [managerSelectedLeadIds, setManagerSelectedLeadIds] = useState<string[]>(
+    []
+  );
+  const [managerBulkAgentId, setManagerBulkAgentId] = useState("");
+  const [managerActionStatus, setManagerActionStatus] = useState<string | null>(
+    null
+  );
+  const roundRobinCursorRef = useRef(0);
   const [anchorSessionId, setAnchorSessionId] = useState<string | null>(null);
   const [anchorActive, setAnchorActive] = useState(false);
   const [anchorData, setAnchorData] = useState<AnchorPayload | null>(null);
@@ -713,6 +832,93 @@ export default function VendorDashboard() {
   }, [getActiveVendorId, portalId]);
 
   const selectedPlot = plots.find((plot) => plot.id === selectedPlotId) ?? null;
+  const logAuditAction = useCallback(
+    async (
+      action: string,
+      entityType: AuditLogEntry["entityType"],
+      entityId: string,
+      details?: string
+    ) => {
+      const scopeId = getDashboardScopeId();
+      if (!portalId && !scopeId) return;
+      try {
+        await addDoc(collection(db, "portalAuditLogs"), {
+          action,
+          entityType,
+          entityId,
+          details: details || "",
+          portalId: portalId ?? null,
+          dashboardScopeId: scopeId ?? null,
+          actorId: vendorId ?? "system",
+          actorName: userName ?? "System",
+          createdAt: serverTimestamp(),
+        });
+      } catch {
+        // Audit trail should not block user workflow.
+      }
+    },
+    [getDashboardScopeId, portalId, userName, vendorId]
+  );
+  const pickAgentByRule = useCallback(
+    (
+      availableAgents: { id: string; name: string; email: string }[],
+      counts: Map<string, number>,
+      options?: { vip?: boolean; excludeAgentId?: string }
+    ) => {
+      const candidates = availableAgents.filter(
+        (agent) => agent.id !== options?.excludeAgentId
+      );
+      if (!candidates.length) return null;
+      const mode = opsConfig.assignmentMode;
+      if (mode === "round_robin") {
+        const sorted = [...candidates].sort((a, b) =>
+          (a.name || a.email).localeCompare(b.name || b.email)
+        );
+        const index = roundRobinCursorRef.current % sorted.length;
+        roundRobinCursorRef.current += 1;
+        return sorted[index];
+      }
+      if (mode === "random" && !options?.vip) {
+        return candidates[Math.floor(Math.random() * candidates.length)];
+      }
+      const minLoad = Math.min(
+        ...candidates.map((agent) => counts.get(agent.id) ?? 0)
+      );
+      const leastLoaded = candidates.filter(
+        (agent) => (counts.get(agent.id) ?? 0) === minLoad
+      );
+      if (options?.vip) {
+        return [...leastLoaded].sort((a, b) =>
+          (a.name || a.email).localeCompare(b.name || b.email)
+        )[0];
+      }
+      return leastLoaded[Math.floor(Math.random() * leastLoaded.length)];
+    },
+    [opsConfig.assignmentMode]
+  );
+  const shareListingFromPortal = async (listingId: string) => {
+    if (typeof window === "undefined") return;
+    const shareUrl = `${window.location.origin}/?listing=${encodeURIComponent(
+      listingId
+    )}`;
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: "PlotTrust listing",
+          text: "View this listing on PlotTrust.",
+          url: shareUrl,
+        });
+        return;
+      }
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(shareUrl);
+        return;
+      }
+      window.prompt("Copy this listing link:", shareUrl);
+    } catch {
+      // ignore share cancellations
+    }
+  };
 
   useEffect(() => {
     setHydrated(true);
@@ -777,12 +983,25 @@ export default function VendorDashboard() {
           { role?: string; permissions?: MemberPermissions }
         >;
         memberIds?: string[];
+        opsConfig?: Partial<OpsConfig>;
       };
       setVendorProfile({
         name: data.name || "Portal",
         type: data.type === "company" ? "Company" : "Individual",
         location: data.location || "Location not set",
       });
+      if (data.opsConfig) {
+        setOpsConfig((current) => ({
+          ...current,
+          ...data.opsConfig,
+          assignmentMode:
+            data.opsConfig?.assignmentMode === "round_robin" ||
+            data.opsConfig?.assignmentMode === "random" ||
+            data.opsConfig?.assignmentMode === "least_load"
+              ? data.opsConfig.assignmentMode
+              : current.assignmentMode,
+        }));
+      }
       const member = data.members?.[vendorId];
       const role = normalizeMemberRole(member?.role);
       const adminFlag = role === "admin";
@@ -981,6 +1200,12 @@ export default function VendorDashboard() {
         ...(reminder ? { reminders: arrayUnion(reminder) } : {}),
         ...(leadNextFollowUpAt ? { nextFollowUpAt: leadNextFollowUpAt } : {}),
       });
+      await logAuditAction(
+        "lead_progress_logged",
+        "lead",
+        selectedLeadId,
+        `${entry.kind}: ${entry.note.slice(0, 120)}`
+      );
       setInquiries((current) =>
         current.map((item) =>
           item.id === selectedLeadId
@@ -1033,16 +1258,24 @@ export default function VendorDashboard() {
     try {
       await updateDoc(doc(db, "inquiries", selectedLeadId), {
         status: "successful",
+        pipelineStage: "won",
         successfulById: vendorId ?? "",
         successfulByName: userDisplayName ?? "Member",
         successfulAt: serverTimestamp(),
       });
+      await logAuditAction(
+        "lead_marked_successful",
+        "lead",
+        selectedLeadId,
+        `Marked successful by ${userDisplayName ?? "Member"}`
+      );
       setInquiries((current) =>
         current.map((item) =>
           item.id === selectedLeadId
             ? {
                 ...item,
                 status: "successful",
+                pipelineStage: "won",
                 successfulByName: userDisplayName ?? "Member",
                 successfulAt: new Date().toLocaleString(),
               }
@@ -1062,6 +1295,12 @@ export default function VendorDashboard() {
         visitedByName: userDisplayName ?? "Member",
         visitedAt: serverTimestamp(),
       });
+      await logAuditAction(
+        "visit_marked_visited",
+        "inquiry",
+        visitId,
+        `Visit marked as visited by ${userDisplayName ?? "Member"}`
+      );
       setVisitRequests((current) =>
         current.map((item) =>
           item.id === visitId
@@ -1076,6 +1315,88 @@ export default function VendorDashboard() {
       );
     } catch {
       // keep UI responsive if visit status update fails
+    }
+  };
+
+  const updateLeadPipelineStage = async () => {
+    if (!selectedLeadId || !leadPipelineStage) return;
+    setLeadStageSaving(true);
+    try {
+      await updateDoc(doc(db, "inquiries", selectedLeadId), {
+        pipelineStage: leadPipelineStage,
+      });
+      setInquiries((current) =>
+        current.map((item) =>
+          item.id === selectedLeadId
+            ? { ...item, pipelineStage: leadPipelineStage }
+            : item
+        )
+      );
+      await logAuditAction(
+        "lead_stage_updated",
+        "lead",
+        selectedLeadId,
+        `Stage set to ${leadPipelineStage}`
+      );
+    } finally {
+      setLeadStageSaving(false);
+    }
+  };
+
+  const saveLeadPrequalification = async () => {
+    if (!selectedLeadId) return;
+    setPrequalSaving(true);
+    const monthlyIncomeNum = Number(financeIncome);
+    const income = Number.isFinite(monthlyIncomeNum) ? Math.max(0, monthlyIncomeNum) : 0;
+    const budget = parseKshInput(financeBudget);
+    const score = Math.max(
+      0,
+      Math.min(
+        100,
+        Math.round(
+          (financeReady === "yes" ? 35 : financeReady === "unknown" ? 15 : 0) +
+            (prequalStatus === "qualified"
+              ? 40
+              : prequalStatus === "in_review"
+              ? 22
+              : prequalStatus === "not_qualified"
+              ? 5
+              : 10) +
+            (income >= 150000 ? 15 : income >= 80000 ? 10 : income > 0 ? 6 : 0) +
+            (budget >= 3000000 ? 10 : budget >= 1000000 ? 7 : budget > 0 ? 4 : 0)
+        )
+      )
+    );
+    try {
+      await updateDoc(doc(db, "inquiries", selectedLeadId), {
+        financingReady: financeReady,
+        prequalStatus,
+        budgetRange: financeBudget.trim(),
+        monthlyIncome: income || null,
+        prequalScore: score,
+      });
+      setInquiries((current) =>
+        current.map((item) =>
+          item.id === selectedLeadId
+            ? {
+                ...item,
+                financingReady: financeReady,
+                prequalStatus,
+                budgetRange: financeBudget.trim(),
+                monthlyIncome: income || undefined,
+                prequalScore: score,
+              }
+            : item
+        )
+      );
+      await logAuditAction(
+        "lead_prequal_updated",
+        "lead",
+        selectedLeadId,
+        `Prequal ${prequalStatus}, score ${score}`
+      );
+    } finally {
+      setPrequalSaving(false);
     }
   };
 
@@ -1109,6 +1430,60 @@ export default function VendorDashboard() {
     }
   };
 
+  const generateWorkspaceCopilot = async () => {
+    if (workspaceCopilotLoading) return;
+    setWorkspaceCopilotError(null);
+    setWorkspaceCopilotLoading(true);
+    try {
+      const response = await fetch("/api/gemini/workspace-copilot", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          activeTab,
+          summary: {
+            totalListings: plots.length,
+            totalInquiries: inquiries.length,
+            openInquiries: inquiries.filter((item) => (item.status ?? "new") === "new")
+              .length,
+            respondedLeads: inquiries.filter(
+              (item) => (item.status ?? "new") === "responded"
+            ).length,
+            successfulLeads: inquiries.filter(
+              (item) => (item.status ?? "new") === "successful"
+            ).length,
+            pendingSales: pendingSalesRecords.length,
+            completedSales: salesRecords.length,
+            overdueFollowUps: managerQueues.overdueFollowUps.length,
+            uncontactedQueue: managerQueues.uncontacted.length,
+            overdueCollections: collectionsMetrics.overdue.length,
+            soldValue: totalSoldValue,
+          },
+          hotLeads: inquiries
+            .filter((item) => (item.status ?? "new") !== "successful")
+            .slice(0, 6)
+            .map((item) => ({
+              id: item.id,
+              buyer: item.buyer,
+              parcel: item.parcel,
+              status: item.status ?? "new",
+              assignedAgentName: item.assignedAgentName ?? null,
+              nextFollowUpAt: item.nextFollowUpAt ?? null,
+            })),
+        }),
+      });
+      if (!response.ok) {
+        setWorkspaceCopilotError("Unable to generate AI guidance right now.");
+        return;
+      }
+      const payload = (await response.json()) as WorkspaceCopilotPayload;
+      setWorkspaceCopilot(payload);
+    } catch {
+      setWorkspaceCopilotError("Unable to generate AI guidance right now.");
+    } finally {
+      setWorkspaceCopilotLoading(false);
+    }
+  };
+
   const createManualLead = async () => {
     const buyerName = manualLeadName.trim();
     const buyerPhone = manualLeadPhone.trim();
@@ -1127,7 +1502,22 @@ export default function VendorDashboard() {
       let targetAgentId = manualLeadAgentId;
       let targetAgentName = "";
       if (!targetAgentId) {
-        const selected = pickBalancedAgent(assignableAgents, inquiries);
+        const counts = new Map<string, number>(
+          assignableAgents.map((agent) => [
+            agent.id,
+            inquiries.filter(
+              (item) =>
+                item.assignedAgentId === agent.id &&
+                (item.status ?? "new") !== "successful"
+            ).length,
+          ])
+        );
+        const selected = pickAgentByRule(assignableAgents, counts, {
+          vip:
+            manualLeadMessage
+              .toLowerCase()
+              .includes(opsConfig.vipKeyword.toLowerCase()),
+        });
         if (selected) {
           targetAgentId = selected.id;
           targetAgentName = selected.name || selected.email || "Agent";
@@ -1154,6 +1544,12 @@ export default function VendorDashboard() {
         respondedById: vendorId ?? "",
         respondedByName: userDisplayName ?? "Member",
         respondedAt: serverTimestamp(),
+        pipelineStage: "qualified" as const,
+        financingReady: "unknown" as const,
+        prequalStatus: "not_started" as const,
+        budgetRange: "",
+        monthlyIncome: null,
+        prequalScore: 0,
         progressLogs: [
           {
             id: `${Date.now()}-manual-capture`,
@@ -1167,6 +1563,14 @@ export default function VendorDashboard() {
         createdAt: serverTimestamp(),
       };
       await addDoc(collection(db, "inquiries"), payload);
+      await logAuditAction(
+        "manual_lead_created",
+        "lead",
+        buyerPhone,
+        `Manual lead for ${buyerName}${
+          targetAgentName ? ` assigned to ${targetAgentName}` : ""
+        }`
+      );
       setManualLeadName("");
       setManualLeadPhone("");
       setManualLeadParcel("");
@@ -1188,12 +1592,34 @@ export default function VendorDashboard() {
   }, [activeTab, canCreateListings, canViewInquiries, canViewLeads, canManageMembers, canAddSales]);
 
   useEffect(() => {
+    const lead = inquiries.find((item) => item.id === selectedLeadId);
     setLeadProgressNote("");
     setLeadProgressKind("follow_up");
     setLeadNextFollowUpAt("");
     setLeadReminderAt("");
     setLeadReminderChannel("WhatsApp");
-  }, [selectedLeadId]);
+    setLeadPipelineStage(lead?.pipelineStage ?? "qualified");
+    setFinanceBudget(lead?.budgetRange ?? "");
+    setFinanceIncome(
+      typeof lead?.monthlyIncome === "number" ? String(lead.monthlyIncome) : ""
+    );
+    setFinanceReady(lead?.financingReady ?? "unknown");
+    setPrequalStatus(lead?.prequalStatus ?? "not_started");
+  }, [inquiries, selectedLeadId]);
+
+  useEffect(() => {
+    if (
+      activeTab !== "inquiries" &&
+      activeTab !== "leads" &&
+      activeTab !== "pending" &&
+      activeTab !== "sales"
+    ) {
+      return;
+    }
+    if (!workspaceCopilot) {
+      void generateWorkspaceCopilot();
+    }
+  }, [activeTab, workspaceCopilot]);
 
   const loadingView = (
     <div className="min-h-screen bg-[radial-gradient(circle_at_12%_10%,_rgba(209,167,65,0.22),_transparent_28%),radial-gradient(circle_at_88%_12%,_rgba(74,160,255,0.2),_transparent_34%),linear-gradient(120deg,_#050b1a_0%,_#07122a_45%,_#091631_100%)] text-[#e8eefc]">
@@ -1280,6 +1706,12 @@ export default function VendorDashboard() {
         ];
       });
       setMemberEmail("");
+      await logAuditAction(
+        "member_added",
+        "member",
+        userDocId,
+        `Added ${userData?.email || email} as ${memberRole}`
+      );
     } catch {
       setMemberError("Unable to add member. Try again.");
     } finally {
@@ -1301,6 +1733,12 @@ export default function VendorDashboard() {
       });
       setPortalMembers((current) =>
         current.filter((member) => member.id !== memberId)
+      );
+      await logAuditAction(
+        "member_removed",
+        "member",
+        memberId,
+        "Member removed from portal"
       );
     } catch {
       setAccessDenied("Unable to remove member. Try again.");
@@ -1329,6 +1767,12 @@ export default function VendorDashboard() {
         [`members.${editingMemberId}.role`]: editingRole,
         [`members.${editingMemberId}.permissions`]: normalizedPerms,
       });
+      await logAuditAction(
+        "member_role_updated",
+        "member",
+        editingMemberId,
+        `Role updated to ${editingRole}`
+      );
       setPortalMembers((current) =>
         current.map((member) =>
           member.id === editingMemberId
@@ -1682,7 +2126,22 @@ export default function VendorDashboard() {
         );
       });
       const now = new Date();
-      const canAutoReassign = isWithinBusinessHours(now);
+      const responseReminderMs =
+        Math.max(1, Number(opsConfig.responseReminderHours) || 1) * 60 * 60 * 1000;
+      const inquiryReassignMs =
+        Math.max(1, Number(opsConfig.inquiryReassignHours) || 2) * 60 * 60 * 1000;
+      const updateReminderMs =
+        Math.max(1, Number(opsConfig.leadUpdateReminderHours) || 4) * 60 * 60 * 1000;
+      const updateReassignMs =
+        Math.max(1, Number(opsConfig.leadUpdateReassignHours) || 8) *
+        60 *
+        60 *
+        1000;
+      const canAutoReassign = isWithinBusinessHoursRange(
+        now,
+        opsConfig.activeStartHour,
+        opsConfig.activeEndHour
+      );
       docs.forEach((docSnap) => {
         const data = docSnap.data() as {
           buyerName?: string;
@@ -1701,6 +2160,12 @@ export default function VendorDashboard() {
           successfulByName?: string;
           successfulAt?: { toDate: () => Date };
           nextFollowUpAt?: string;
+          pipelineStage?: Inquiry["pipelineStage"];
+          financingReady?: "yes" | "no" | "unknown";
+          prequalStatus?: "not_started" | "in_review" | "qualified" | "not_qualified";
+          budgetRange?: string;
+          monthlyIncome?: number;
+          prequalScore?: number;
           lastResponseReminderAt?: { toDate: () => Date };
           lastUpdateReminderAt?: { toDate: () => Date };
           progressLogs?: {
@@ -1738,14 +2203,14 @@ export default function VendorDashboard() {
         if (!assignedAgentId && portalId && assignableAgents.length) {
           const status = data.status ?? "new";
           if (status === "new") {
-            const minimumLoad = Math.min(...Array.from(assignmentCounts.values()));
-            const eligibleAgents = assignableAgents.filter(
-              (agent) => (assignmentCounts.get(agent.id) ?? 0) === minimumLoad
-            );
-            const selectedAgent =
-              eligibleAgents[
-                Math.floor(Math.random() * eligibleAgents.length)
-              ];
+            const isVip =
+              (data.message ?? "")
+                .toLowerCase()
+                .includes(opsConfig.vipKeyword.toLowerCase());
+            const selectedAgent = pickAgentByRule(assignableAgents, assignmentCounts, {
+              vip: isVip,
+            });
+            if (!selectedAgent) return;
             assignedAgentId = selectedAgent.id;
             assignedAgentName =
               selectedAgent.name || selectedAgent.email || "Agent";
@@ -1767,24 +2232,19 @@ export default function VendorDashboard() {
           canAutoReassign &&
           (data.status ?? "new") === "new"
         ) {
-          const elapsed = getBusinessElapsedMs(assignedAt, now);
-          if (elapsed >= INQUIRY_REASSIGN_AFTER_MS) {
+          const elapsed = getBusinessElapsedMsRange(
+            assignedAt,
+            now,
+            opsConfig.activeStartHour,
+            opsConfig.activeEndHour
+          );
+          if (elapsed >= inquiryReassignMs) {
             const currentCount = assignmentCounts.get(assignedAgentId) ?? 0;
             assignmentCounts.set(assignedAgentId, Math.max(currentCount - 1, 0));
-            const candidates = assignableAgents.filter(
-              (agent) => agent.id !== assignedAgentId
-            );
-            if (candidates.length) {
-              const minimumLoad = Math.min(
-                ...candidates.map((agent) => assignmentCounts.get(agent.id) ?? 0)
-              );
-              const eligibleAgents = candidates.filter(
-                (agent) => (assignmentCounts.get(agent.id) ?? 0) === minimumLoad
-              );
-              const selectedAgent =
-                eligibleAgents[
-                  Math.floor(Math.random() * eligibleAgents.length)
-                ];
+            const selectedAgent = pickAgentByRule(assignableAgents, assignmentCounts, {
+              excludeAgentId: assignedAgentId,
+            });
+            if (selectedAgent) {
               assignedAgentId = selectedAgent.id;
               assignedAgentName =
                 selectedAgent.name || selectedAgent.email || "Agent";
@@ -1852,7 +2312,14 @@ export default function VendorDashboard() {
             const scheduled = new Date(reminder.scheduledAt);
             if (Number.isNaN(scheduled.getTime())) return false;
             if (scheduled > now) return false;
-            if (!isWithinBusinessHours(now)) return false;
+            if (
+              !isWithinBusinessHoursRange(
+                now,
+                opsConfig.activeStartHour,
+                opsConfig.activeEndHour
+              )
+            )
+              return false;
             return isPortalAdmin || assignedAgentId === vendorId;
           });
         const automationPayload: Record<string, unknown> = {};
@@ -1888,14 +2355,24 @@ export default function VendorDashboard() {
           automationPayload.reminders = updatedReminders;
         }
         if ((data.status ?? "new") === "new" && assignedAgentId && canAutoReassign) {
-          const elapsedSinceAssigned = getBusinessElapsedMs(assignedAt, now);
+          const elapsedSinceAssigned = getBusinessElapsedMsRange(
+            assignedAt,
+            now,
+            opsConfig.activeStartHour,
+            opsConfig.activeEndHour
+          );
           const lastResponseReminderAt = data.lastResponseReminderAt?.toDate?.();
           const elapsedSinceResponseReminder = lastResponseReminderAt
-            ? getBusinessElapsedMs(lastResponseReminderAt, now)
+            ? getBusinessElapsedMsRange(
+                lastResponseReminderAt,
+                now,
+                opsConfig.activeStartHour,
+                opsConfig.activeEndHour
+              )
             : Number.POSITIVE_INFINITY;
           if (
-            elapsedSinceAssigned >= SLA_RESPONSE_REMINDER_MS &&
-            elapsedSinceResponseReminder >= SLA_RESPONSE_REMINDER_MS
+            elapsedSinceAssigned >= responseReminderMs &&
+            elapsedSinceResponseReminder >= responseReminderMs
           ) {
             automationPayload.lastResponseReminderAt = serverTimestamp();
             automationLogs.push({
@@ -1909,14 +2386,24 @@ export default function VendorDashboard() {
           }
         }
         if ((data.status ?? "new") === "responded" && assignedAgentId && canAutoReassign) {
-          const elapsedSinceActivity = getBusinessElapsedMs(lastActivityAt, now);
+          const elapsedSinceActivity = getBusinessElapsedMsRange(
+            lastActivityAt,
+            now,
+            opsConfig.activeStartHour,
+            opsConfig.activeEndHour
+          );
           const lastUpdateReminderAt = data.lastUpdateReminderAt?.toDate?.();
           const elapsedSinceUpdateReminder = lastUpdateReminderAt
-            ? getBusinessElapsedMs(lastUpdateReminderAt, now)
+            ? getBusinessElapsedMsRange(
+                lastUpdateReminderAt,
+                now,
+                opsConfig.activeStartHour,
+                opsConfig.activeEndHour
+              )
             : Number.POSITIVE_INFINITY;
           if (
-            elapsedSinceActivity >= SLA_UPDATE_REMINDER_MS &&
-            elapsedSinceUpdateReminder >= SLA_UPDATE_REMINDER_MS
+            elapsedSinceActivity >= updateReminderMs &&
+            elapsedSinceUpdateReminder >= updateReminderMs
           ) {
             automationPayload.lastUpdateReminderAt = serverTimestamp();
             automationLogs.push({
@@ -1928,23 +2415,13 @@ export default function VendorDashboard() {
               at: now.toISOString(),
             });
           }
-          if (elapsedSinceActivity >= SLA_UPDATE_REASSIGN_MS && assignableAgents.length > 1) {
+          if (elapsedSinceActivity >= updateReassignMs && assignableAgents.length > 1) {
             const currentCount = assignmentCounts.get(assignedAgentId) ?? 0;
             assignmentCounts.set(assignedAgentId, Math.max(currentCount - 1, 0));
-            const candidates = assignableAgents.filter(
-              (agent) => agent.id !== assignedAgentId
-            );
-            if (candidates.length) {
-              const minimumLoad = Math.min(
-                ...candidates.map((agent) => assignmentCounts.get(agent.id) ?? 0)
-              );
-              const eligibleAgents = candidates.filter(
-                (agent) => (assignmentCounts.get(agent.id) ?? 0) === minimumLoad
-              );
-              const selectedAgent =
-                eligibleAgents[
-                  Math.floor(Math.random() * eligibleAgents.length)
-                ];
+            const selectedAgent = pickAgentByRule(assignableAgents, assignmentCounts, {
+              excludeAgentId: assignedAgentId,
+            });
+            if (selectedAgent) {
               assignedAgentId = selectedAgent.id;
               assignedAgentName =
                 selectedAgent.name || selectedAgent.email || "Agent";
@@ -2001,6 +2478,20 @@ export default function VendorDashboard() {
           successfulByName: data.successfulByName,
           successfulAt: successfulAtDate?.toLocaleString(),
           nextFollowUpAt: data.nextFollowUpAt,
+          pipelineStage:
+            data.pipelineStage ??
+            ((data.status ?? "new") === "new"
+              ? "new"
+              : (data.status ?? "new") === "successful"
+              ? "won"
+              : "qualified"),
+          financingReady: data.financingReady ?? "unknown",
+          prequalStatus: data.prequalStatus ?? "not_started",
+          budgetRange: data.budgetRange ?? "",
+          monthlyIncome:
+            typeof data.monthlyIncome === "number" ? data.monthlyIncome : undefined,
+          prequalScore:
+            typeof data.prequalScore === "number" ? data.prequalScore : undefined,
           progressLogs: progressLogs.map((log) => ({
             id: log.id,
             kind: log.kind,
@@ -2027,6 +2518,23 @@ export default function VendorDashboard() {
               })
             )
           );
+          if (isPortalAdmin) {
+            await Promise.all(
+              pendingAssignments.map((assignment) =>
+                addDoc(collection(db, "portalAuditLogs"), {
+                  action: "assignment_auto_applied",
+                  entityType: "inquiry",
+                  entityId: assignment.id,
+                  details: `Assigned to ${assignment.assignedAgentName}`,
+                  portalId: portalId ?? null,
+                  dashboardScopeId: getDashboardScopeId() ?? null,
+                  actorId: "system",
+                  actorName: "System",
+                  createdAt: serverTimestamp(),
+                })
+              )
+            );
+          }
         } catch {
           // Keep inquiry loading non-blocking if assignment write fails.
         }
@@ -2059,6 +2567,8 @@ export default function VendorDashboard() {
     isPortalAdmin,
     assignableAgents,
     portalMembers,
+    opsConfig,
+    pickAgentByRule,
   ]);
 
   useEffect(() => {
@@ -2162,6 +2672,148 @@ export default function VendorDashboard() {
     portalId,
     vendorProfile?.name,
   ]);
+
+  useEffect(() => {
+    const loadAuditLogs = async () => {
+      if (!isPortalAdmin) {
+        setAuditLogs([]);
+        return;
+      }
+      const scopeId = getDashboardScopeId();
+      if (!portalId && !scopeId) return;
+      let snapshot;
+      try {
+        snapshot = portalId
+          ? await getDocs(
+              query(
+                collection(db, "portalAuditLogs"),
+                where("portalId", "==", portalId),
+                orderBy("createdAt", "desc")
+              )
+            )
+          : await getDocs(
+              query(
+                collection(db, "portalAuditLogs"),
+                where("dashboardScopeId", "==", scopeId),
+                orderBy("createdAt", "desc")
+              )
+            );
+      } catch {
+        snapshot = portalId
+          ? await getDocs(
+              query(
+                collection(db, "portalAuditLogs"),
+                where("portalId", "==", portalId)
+              )
+            )
+          : await getDocs(
+              query(
+                collection(db, "portalAuditLogs"),
+                where("dashboardScopeId", "==", scopeId)
+              )
+            );
+      }
+      const mapped = snapshot.docs
+        .map((docSnap) => {
+          const data = docSnap.data() as {
+            action?: string;
+            entityType?: AuditLogEntry["entityType"];
+            entityId?: string;
+            actorId?: string;
+            actorName?: string;
+            details?: string;
+            createdAt?: { toDate?: () => Date } | string;
+          };
+          const createdAtDate =
+            typeof data.createdAt === "object" && data.createdAt?.toDate
+              ? data.createdAt.toDate()
+              : typeof data.createdAt === "string"
+              ? new Date(data.createdAt)
+              : null;
+          return {
+            id: docSnap.id,
+            action: data.action ?? "updated",
+            entityType: data.entityType ?? "portal",
+            entityId: data.entityId ?? "",
+            actorId: data.actorId ?? "",
+            actorName: data.actorName ?? "System",
+            details: data.details,
+            createdAtLabel: createdAtDate
+              ? createdAtDate.toLocaleString()
+              : "Recently",
+          } as AuditLogEntry;
+        })
+        .slice(0, 40);
+      setAuditLogs(mapped);
+    };
+    loadAuditLogs();
+  }, [getDashboardScopeId, isPortalAdmin, portalId]);
+
+  useEffect(() => {
+    const loadCommissionPayouts = async () => {
+      const scopeId = getDashboardScopeId();
+      if (!portalId && !scopeId) {
+        setCommissionPayouts([]);
+        return;
+      }
+      let snapshot;
+      try {
+        snapshot = portalId
+          ? await getDocs(
+              query(
+                collection(db, "commissionPayouts"),
+                where("portalId", "==", portalId),
+                orderBy("createdAt", "desc")
+              )
+            )
+          : await getDocs(
+              query(
+                collection(db, "commissionPayouts"),
+                where("dashboardScopeId", "==", scopeId),
+                orderBy("createdAt", "desc")
+              )
+            );
+      } catch {
+        snapshot = portalId
+          ? await getDocs(
+              query(collection(db, "commissionPayouts"), where("portalId", "==", portalId))
+            )
+          : await getDocs(
+              query(
+                collection(db, "commissionPayouts"),
+                where("dashboardScopeId", "==", scopeId)
+              )
+            );
+      }
+      const mapped = snapshot.docs.map((docSnap) => {
+        const data = docSnap.data() as {
+          agentId?: string;
+          agentName?: string;
+          amount?: number;
+          paidByName?: string;
+          createdAt?: { toDate?: () => Date } | string;
+        };
+        const createdAtDate =
+          typeof data.createdAt === "object" && data.createdAt?.toDate
+            ? data.createdAt.toDate()
+            : typeof data.createdAt === "string"
+            ? new Date(data.createdAt)
+            : null;
+        return {
+          id: docSnap.id,
+          agentId: data.agentId ?? "",
+          agentName: data.agentName ?? "Agent",
+          amount: Number(data.amount) || 0,
+          paidByName: data.paidByName ?? "Manager",
+          createdAtLabel: createdAtDate
+            ? createdAtDate.toLocaleString()
+            : "Recently",
+        } as CommissionPayout;
+      });
+      setCommissionPayouts(mapped);
+    };
+    loadCommissionPayouts();
+  }, [getDashboardScopeId, portalId]);
 
   const earthRadius = 6371000;
   const minGpsAccuracyMeters = 3;
@@ -3144,6 +3796,70 @@ export default function VendorDashboard() {
     });
   };
 
+  const saveOpsConfiguration = async () => {
+    if (!portalId || !isPortalAdmin) return;
+    setOpsConfigSaving(true);
+    setOpsConfigStatus(null);
+    const normalized: OpsConfig = {
+      assignmentMode: opsConfig.assignmentMode,
+      vipKeyword: opsConfig.vipKeyword.trim() || "vip",
+      responseReminderHours: Math.min(
+        24,
+        Math.max(1, Number(opsConfig.responseReminderHours) || 1)
+      ),
+      inquiryReassignHours: Math.min(
+        48,
+        Math.max(1, Number(opsConfig.inquiryReassignHours) || 2)
+      ),
+      leadUpdateReminderHours: Math.min(
+        72,
+        Math.max(1, Number(opsConfig.leadUpdateReminderHours) || 4)
+      ),
+      leadUpdateReassignHours: Math.min(
+        120,
+        Math.max(1, Number(opsConfig.leadUpdateReassignHours) || 8)
+      ),
+      agentCommissionPct: Math.min(
+        30,
+        Math.max(0, Number(opsConfig.agentCommissionPct) || 0)
+      ),
+      managerCommissionPct: Math.min(
+        20,
+        Math.max(0, Number(opsConfig.managerCommissionPct) || 0)
+      ),
+      activeStartHour: Math.min(
+        23,
+        Math.max(0, Number(opsConfig.activeStartHour) || BUSINESS_START_HOUR)
+      ),
+      activeEndHour: Math.min(
+        24,
+        Math.max(1, Number(opsConfig.activeEndHour) || BUSINESS_END_HOUR)
+      ),
+    };
+    if (normalized.activeEndHour <= normalized.activeStartHour) {
+      setOpsConfigSaving(false);
+      setOpsConfigStatus("Active end hour must be later than start hour.");
+      return;
+    }
+    try {
+      await updateDoc(doc(db, "vendorPortals", portalId), {
+        opsConfig: normalized,
+      });
+      setOpsConfig(normalized);
+      setOpsConfigStatus("Ops configuration saved.");
+      await logAuditAction(
+        "ops_config_updated",
+        "portal",
+        portalId,
+        `Assignment: ${normalized.assignmentMode}; active window ${normalized.activeStartHour}:00-${normalized.activeEndHour}:00`
+      );
+    } catch {
+      setOpsConfigStatus("Unable to save configuration.");
+    } finally {
+      setOpsConfigSaving(false);
+    }
+  };
+
   const generateSaleId = () => {
     const random = Math.floor(100000 + Math.random() * 900000);
     return `SALE-${random}`;
@@ -3722,6 +4438,473 @@ export default function VendorDashboard() {
       };
     });
   }, [inquiries, portalMembers, salesRecords, isPortalAdmin, vendorId]);
+
+  const managerQueues = useMemo(() => {
+    const now = new Date();
+    const responseReminderMs =
+      Math.max(1, Number(opsConfig.responseReminderHours) || 1) * 60 * 60 * 1000;
+    const updateReassignMs =
+      Math.max(1, Number(opsConfig.leadUpdateReassignHours) || 8) *
+      60 *
+      60 *
+      1000;
+    const parseDateSafe = (value?: string) => {
+      if (!value) return null;
+      const parsed = new Date(value);
+      if (Number.isNaN(parsed.getTime())) return null;
+      return parsed;
+    };
+    const uncontacted = inquiries.filter((item) => {
+      if ((item.status ?? "new") !== "new") return false;
+      const assignedAt = parseDateSafe(item.assignedAt) ?? parseDateSafe(item.time);
+      if (!assignedAt) return false;
+      return now.getTime() - assignedAt.getTime() >= responseReminderMs;
+    });
+    const overdueFollowUps = inquiries.filter((item) => {
+      if ((item.status ?? "new") !== "responded") return false;
+      const next = parseDateSafe(item.nextFollowUpAt);
+      return !!next && next < now;
+    });
+    const stuckDeals = inquiries.filter((item) => {
+      if ((item.status ?? "new") !== "responded") return false;
+      const latestProgress = (item.progressLogs ?? [])
+        .map((entry) => parseDateSafe(entry.at))
+        .filter((date): date is Date => !!date)
+        .sort((a, b) => b.getTime() - a.getTime())[0];
+      const baseline = latestProgress ?? parseDateSafe(item.respondedAt) ?? parseDateSafe(item.assignedAt);
+      if (!baseline) return false;
+      return now.getTime() - baseline.getTime() >= updateReassignMs;
+    });
+    return { uncontacted, overdueFollowUps, stuckDeals };
+  }, [inquiries, opsConfig.leadUpdateReassignHours, opsConfig.responseReminderHours]);
+
+  const forecastMetrics = useMemo(() => {
+    const avgSaleValueRaw =
+      salesRecords.length > 0
+        ? salesRecords.reduce((sum, sale) => sum + sale.salePrice, 0) / salesRecords.length
+        : plots.length > 0
+        ? plots.reduce((sum, plot) => sum + parseKshInput(plot.price), 0) /
+          Math.max(plots.length, 1)
+        : 0;
+    const avgSaleValue = Number.isFinite(avgSaleValueRaw) ? avgSaleValueRaw : 0;
+    const newLeads = inquiries.filter((item) => (item.status ?? "new") === "new");
+    const activeLeads = inquiries.filter(
+      (item) => (item.status ?? "new") === "responded"
+    );
+    const pendingBalance = pendingSalesRecords.reduce(
+      (sum, sale) => sum + Math.max(0, sale.remainingBalance),
+      0
+    );
+    const expected7d = Math.round(
+      pendingBalance * 0.4 + activeLeads.length * avgSaleValue * 0.15
+    );
+    const expected30d = Math.round(
+      pendingBalance * 0.8 +
+        activeLeads.length * avgSaleValue * 0.35 +
+        newLeads.length * avgSaleValue * 0.12
+    );
+    const expected90d = Math.round(
+      pendingBalance +
+        activeLeads.length * avgSaleValue * 0.6 +
+        newLeads.length * avgSaleValue * 0.3
+    );
+    return {
+      avgSaleValue: Math.round(avgSaleValue),
+      expected7d,
+      expected30d,
+      expected90d,
+    };
+  }, [inquiries, pendingSalesRecords, plots, salesRecords]);
+
+  const commissionSummary = useMemo(() => {
+    const dueByAgent = new Map<
+      string,
+      { agentId: string; agentName: string; due: number; salesCount: number }
+    >();
+    visibleSales.forEach((sale) => {
+      const agentId = sale.createdByAgentId || "unassigned";
+      const agentName = sale.createdByAgentName || "Unassigned";
+      const row =
+        dueByAgent.get(agentId) ??
+        { agentId, agentName, due: 0, salesCount: 0 };
+      row.due += sale.salePrice * (opsConfig.agentCommissionPct / 100);
+      row.salesCount += 1;
+      dueByAgent.set(agentId, row);
+    });
+    const paidByAgent = new Map<string, number>();
+    commissionPayouts.forEach((payout) => {
+      paidByAgent.set(
+        payout.agentId,
+        (paidByAgent.get(payout.agentId) ?? 0) + payout.amount
+      );
+    });
+    const rows = Array.from(dueByAgent.values()).map((row) => {
+      const paid = paidByAgent.get(row.agentId) ?? 0;
+      const outstanding = Math.max(0, row.due - paid);
+      return {
+        ...row,
+        due: Math.round(row.due),
+        paid: Math.round(paid),
+        outstanding: Math.round(outstanding),
+      };
+    });
+    const totalSalesValue = visibleSales.reduce((sum, sale) => sum + sale.salePrice, 0);
+    const managerCommissionDue = Math.round(
+      totalSalesValue * (opsConfig.managerCommissionPct / 100)
+    );
+    return { rows, managerCommissionDue };
+  }, [commissionPayouts, opsConfig.agentCommissionPct, opsConfig.managerCommissionPct, visibleSales]);
+
+  const leakageAlerts = useMemo<LeakageAlert[]>(() => {
+    const alerts: LeakageAlert[] = [];
+    managerQueues.uncontacted.forEach((lead) => {
+      alerts.push({
+        id: `uncontacted-${lead.id}`,
+        severity: "high",
+        title: "Uncontacted inquiry",
+        detail: `${lead.buyer} has not been responded to within SLA.`,
+        entityId: lead.id,
+      });
+    });
+    managerQueues.stuckDeals.forEach((lead) => {
+      alerts.push({
+        id: `stuck-${lead.id}`,
+        severity: "high",
+        title: "Stuck responded lead",
+        detail: `${lead.buyer} has no meaningful progress and risks churn.`,
+        entityId: lead.id,
+      });
+    });
+    managerQueues.overdueFollowUps.forEach((lead) => {
+      alerts.push({
+        id: `followup-${lead.id}`,
+        severity: "medium",
+        title: "Overdue follow-up",
+        detail: `${lead.buyer} follow-up date has passed.`,
+        entityId: lead.id,
+      });
+    });
+    pendingSalesRecords.forEach((sale) => {
+      if (!sale.nextPaymentDate || sale.remainingBalance <= 0) return;
+      const nextDate = new Date(sale.nextPaymentDate);
+      if (Number.isNaN(nextDate.getTime())) return;
+      if (nextDate < new Date()) {
+        alerts.push({
+          id: `payment-${sale.id}`,
+          severity: "medium",
+          title: "Overdue installment",
+          detail: `${sale.parcelName} has overdue balance of Ksh ${sale.remainingBalance.toLocaleString()}.`,
+          entityId: sale.id,
+        });
+      }
+    });
+    return alerts.slice(0, 20);
+  }, [managerQueues, pendingSalesRecords]);
+
+  const collectionsMetrics = useMemo(() => {
+    const now = new Date();
+    const in7Days = new Date(now);
+    in7Days.setDate(in7Days.getDate() + 7);
+    const overdue = visiblePendingSales.filter((sale) => {
+      if (!sale.nextPaymentDate || sale.remainingBalance <= 0) return false;
+      const due = new Date(sale.nextPaymentDate);
+      if (Number.isNaN(due.getTime())) return false;
+      return due < now;
+    });
+    const dueSoon = visiblePendingSales.filter((sale) => {
+      if (!sale.nextPaymentDate || sale.remainingBalance <= 0) return false;
+      const due = new Date(sale.nextPaymentDate);
+      if (Number.isNaN(due.getTime())) return false;
+      return due >= now && due <= in7Days;
+    });
+    const atRisk = visiblePendingSales.filter((sale) => {
+      if (sale.remainingBalance <= 0) return false;
+      const soldOn = new Date(sale.soldOn);
+      const olderThan30Days =
+        !Number.isNaN(soldOn.getTime()) &&
+        now.getTime() - soldOn.getTime() > 30 * 24 * 60 * 60 * 1000;
+      const ratio = sale.salePrice > 0 ? sale.remainingBalance / sale.salePrice : 0;
+      return olderThan30Days && ratio >= 0.5;
+    });
+    return { overdue, dueSoon, atRisk };
+  }, [visiblePendingSales]);
+
+  const workspaceFocus = useMemo(() => {
+    const firstOpenInquiry = inquiries.find((item) => (item.status ?? "new") === "new");
+    const firstOverdueLead = managerQueues.overdueFollowUps[0] ?? null;
+    const firstOverdueCollection = collectionsMetrics.overdue[0] ?? null;
+    return {
+      openInquiries: inquiries.filter((item) => (item.status ?? "new") === "new").length,
+      overdueFollowUps: managerQueues.overdueFollowUps.length,
+      overdueCollections: collectionsMetrics.overdue.length,
+      firstOpenInquiryId: firstOpenInquiry?.id ?? null,
+      firstOverdueLeadId: firstOverdueLead?.id ?? null,
+      firstOverdueSaleId: firstOverdueCollection?.id ?? null,
+    };
+  }, [collectionsMetrics.overdue, inquiries, managerQueues.overdueFollowUps]);
+
+  const jumpToInquiryQueue = useCallback(() => {
+    handleTabChange("inquiries");
+    if (workspaceFocus.firstOpenInquiryId) {
+      setSelectedInquiryId(workspaceFocus.firstOpenInquiryId);
+    }
+  }, [handleTabChange, workspaceFocus.firstOpenInquiryId]);
+
+  const jumpToLeadQueue = useCallback(() => {
+    handleTabChange("leads");
+    if (workspaceFocus.firstOverdueLeadId) {
+      setSelectedLeadId(workspaceFocus.firstOverdueLeadId);
+    }
+  }, [handleTabChange, workspaceFocus.firstOverdueLeadId]);
+
+  const jumpToCollectionsQueue = useCallback(() => {
+    handleTabChange("pending");
+    if (workspaceFocus.firstOverdueSaleId) {
+      setExpandedPendingId(workspaceFocus.firstOverdueSaleId);
+      setInstallmentsOpenId(workspaceFocus.firstOverdueSaleId);
+    }
+  }, [handleTabChange, workspaceFocus.firstOverdueSaleId]);
+
+  const runCopilotAction = useCallback(
+    (action: WorkspaceCopilotSuggestion) => {
+      if (action.ctaTab) {
+        handleTabChange(action.ctaTab);
+      }
+      if (action.ctaEntityId) {
+        if (action.ctaTab === "inquiries") {
+          setSelectedInquiryId(action.ctaEntityId);
+        }
+        if (action.ctaTab === "leads") {
+          setSelectedLeadId(action.ctaEntityId);
+        }
+        if (action.ctaTab === "pending") {
+          setExpandedPendingId(action.ctaEntityId);
+          setInstallmentsOpenId(action.ctaEntityId);
+        }
+      }
+    },
+    [handleTabChange]
+  );
+
+  const sendCollectionsNudges = async () => {
+    const targets = collectionsMetrics.overdue;
+    if (!targets.length) {
+      setCollectionsStatus("No overdue accounts to nudge.");
+      return;
+    }
+    setCollectionsStatus(null);
+    try {
+      await Promise.all(
+        targets.map((sale) =>
+          addDoc(collection(db, "collectionReminders"), {
+            portalId: portalId ?? null,
+            dashboardScopeId: getDashboardScopeId() ?? null,
+            saleId: sale.id,
+            parcelName: sale.parcelName,
+            buyer: sale.buyer,
+            remainingBalance: sale.remainingBalance,
+            reminderType: "overdue_nudge",
+            sentById: vendorId ?? "",
+            sentByName: userDisplayName ?? "Manager",
+            createdAt: serverTimestamp(),
+          })
+        )
+      );
+      setCollectionsStatus(`Nudges queued for ${targets.length} overdue account(s).`);
+      await logAuditAction(
+        "collections_nudged",
+        "sale",
+        targets.map((item) => item.id).join(","),
+        `Collections reminders sent for ${targets.length} overdue deals`
+      );
+    } catch {
+      setCollectionsStatus("Unable to send collection nudges.");
+    }
+  };
+
+  const markAgentCommissionPaid = async (agentId: string) => {
+    const row = commissionSummary.rows.find((item) => item.agentId === agentId);
+    const scopeId = getDashboardScopeId();
+    if (!row || row.outstanding <= 0 || (!portalId && !scopeId)) return;
+    setCommissionActionStatus(null);
+    setCommissionPayingAgentId(agentId);
+    try {
+      await addDoc(collection(db, "commissionPayouts"), {
+        portalId: portalId ?? null,
+        dashboardScopeId: scopeId ?? null,
+        agentId: row.agentId,
+        agentName: row.agentName,
+        amount: row.outstanding,
+        paidById: vendorId ?? "",
+        paidByName: userDisplayName ?? "Manager",
+        createdAt: serverTimestamp(),
+      });
+      setCommissionPayouts((current) => [
+        {
+          id: `${Date.now()}-${row.agentId}`,
+          agentId: row.agentId,
+          agentName: row.agentName,
+          amount: row.outstanding,
+          paidByName: userDisplayName ?? "Manager",
+          createdAtLabel: new Date().toLocaleString(),
+        },
+        ...current,
+      ]);
+      setCommissionActionStatus(`Commission paid for ${row.agentName}.`);
+      await logAuditAction(
+        "commission_paid",
+        "sale",
+        row.agentId,
+        `Paid Ksh ${row.outstanding.toLocaleString()} to ${row.agentName}`
+      );
+    } catch {
+      setCommissionActionStatus("Unable to record payout.");
+    } finally {
+      setCommissionPayingAgentId(null);
+    }
+  };
+
+  const exportCommissionPayrollCsv = () => {
+    const rows = commissionSummary.rows;
+    if (!rows.length) {
+      setPayrollStatus("No commission rows to export.");
+      return;
+    }
+    const headers = [
+      "Agent ID",
+      "Agent Name",
+      "Sales Count",
+      "Commission Due",
+      "Commission Paid",
+      "Outstanding",
+    ];
+    const lines = [
+      headers.join(","),
+      ...rows.map((row) =>
+        [
+          row.agentId,
+          row.agentName,
+          row.salesCount,
+          row.due,
+          row.paid,
+          row.outstanding,
+        ]
+          .map((value) => `"${String(value).replace(/"/g, '""')}"`)
+          .join(",")
+      ),
+    ];
+    const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    const dateLabel = new Date().toISOString().slice(0, 10);
+    anchor.href = url;
+    anchor.download = `commission-payroll-${dateLabel}.csv`;
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+    setPayrollStatus("Payroll CSV exported.");
+  };
+
+  const toggleManagerLeadSelection = (leadId: string) => {
+    setManagerSelectedLeadIds((current) =>
+      current.includes(leadId)
+        ? current.filter((id) => id !== leadId)
+        : [...current, leadId]
+    );
+  };
+
+  const runManagerBulkAction = async (
+    action: "reassign" | "nudge" | "escalate"
+  ) => {
+    if (!managerSelectedLeadIds.length) return;
+    const selectedLeads = inquiries.filter((item) =>
+      managerSelectedLeadIds.includes(item.id)
+    );
+    if (!selectedLeads.length) return;
+    setManagerActionStatus(null);
+    try {
+      if (action === "reassign") {
+        const target = assignableAgents.find((agent) => agent.id === managerBulkAgentId);
+        if (!target) {
+          setManagerActionStatus("Select an agent for bulk reassignment.");
+          return;
+        }
+        await Promise.all(
+          selectedLeads.map((lead) =>
+            updateDoc(doc(db, "inquiries", lead.id), {
+              assignedAgentId: target.id,
+              assignedAgentName: target.name || target.email || "Agent",
+              assignedAt: serverTimestamp(),
+              progressLogs: arrayUnion({
+                id: `${Date.now()}-${lead.id}-manager-reassign`,
+                kind: "system",
+                note: `Manager reassigned to ${target.name || target.email || "Agent"}.`,
+                byId: vendorId ?? "",
+                byName: userDisplayName ?? "Manager",
+                at: new Date().toISOString(),
+              }),
+            })
+          )
+        );
+        await logAuditAction(
+          "bulk_reassign",
+          "lead",
+          managerSelectedLeadIds.join(","),
+          `Bulk reassigned ${selectedLeads.length} lead(s) to ${target.name || target.email}`
+        );
+      }
+      if (action === "nudge") {
+        await Promise.all(
+          selectedLeads.map((lead) =>
+            updateDoc(doc(db, "inquiries", lead.id), {
+              progressLogs: arrayUnion({
+                id: `${Date.now()}-${lead.id}-manager-nudge`,
+                kind: "system",
+                note: "Manager nudge sent: please update lead status immediately.",
+                byId: vendorId ?? "",
+                byName: userDisplayName ?? "Manager",
+                at: new Date().toISOString(),
+              }),
+            })
+          )
+        );
+        await logAuditAction(
+          "bulk_nudge",
+          "lead",
+          managerSelectedLeadIds.join(","),
+          `Bulk nudged ${selectedLeads.length} lead(s)`
+        );
+      }
+      if (action === "escalate") {
+        await Promise.all(
+          selectedLeads.map((lead) =>
+            updateDoc(doc(db, "inquiries", lead.id), {
+              escalationLevel: "manager",
+              progressLogs: arrayUnion({
+                id: `${Date.now()}-${lead.id}-manager-escalate`,
+                kind: "system",
+                note: "Manager escalation raised for this lead.",
+                byId: vendorId ?? "",
+                byName: userDisplayName ?? "Manager",
+                at: new Date().toISOString(),
+              }),
+            })
+          )
+        );
+        await logAuditAction(
+          "bulk_escalate",
+          "lead",
+          managerSelectedLeadIds.join(","),
+          `Bulk escalated ${selectedLeads.length} lead(s)`
+        );
+      }
+      setManagerActionStatus(`Bulk ${action} completed.`);
+      setManagerSelectedLeadIds([]);
+    } catch {
+      setManagerActionStatus(`Bulk ${action} failed. Try again.`);
+    }
+  };
 
   const movePendingToSales = (saleId: string) => {
     setPendingSalesRecords((current) => {
@@ -4685,6 +5868,93 @@ export default function VendorDashboard() {
                   </p>
                 </div>
               )}
+            <div className="mt-4 rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-3 text-xs text-[#c6d6f7]">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
+                  Work focus
+                </p>
+                <button
+                  type="button"
+                  onClick={generateWorkspaceCopilot}
+                  disabled={workspaceCopilotLoading}
+                  className="rounded-full border border-[#365a94] bg-[#0d1f3f] px-3 py-1 text-[10px] text-[#d6e5ff] disabled:opacity-60"
+                >
+                  {workspaceCopilotLoading ? "Generating..." : "AI copilot"}
+                </button>
+              </div>
+              <div className="mt-2 grid gap-2 md:grid-cols-3">
+                <button
+                  type="button"
+                  onClick={jumpToInquiryQueue}
+                  className="rounded-xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-left"
+                >
+                  <p className="text-[10px] text-[#9eb6e1]">Unresponded inquiries</p>
+                  <p className="mt-1 text-sm font-semibold text-[#f2f6ff]">
+                    {workspaceFocus.openInquiries}
+                  </p>
+                </button>
+                <button
+                  type="button"
+                  onClick={jumpToLeadQueue}
+                  className="rounded-xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-left"
+                >
+                  <p className="text-[10px] text-[#9eb6e1]">Overdue follow-ups</p>
+                  <p className="mt-1 text-sm font-semibold text-[#f2f6ff]">
+                    {workspaceFocus.overdueFollowUps}
+                  </p>
+                </button>
+                <button
+                  type="button"
+                  onClick={jumpToCollectionsQueue}
+                  className="rounded-xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-left"
+                >
+                  <p className="text-[10px] text-[#9eb6e1]">Overdue collections</p>
+                  <p className="mt-1 text-sm font-semibold text-[#f2f6ff]">
+                    {workspaceFocus.overdueCollections}
+                  </p>
+                </button>
+              </div>
+              {workspaceCopilotError && (
+                <p className="mt-2 text-[10px] text-[#ffb4ab]">{workspaceCopilotError}</p>
+              )}
+              {workspaceCopilot && (
+                <div className="mt-3 rounded-xl border border-[#365a94] bg-[#0d1f3f] px-3 py-3">
+                  <p className="text-[11px] font-semibold text-[#f2f6ff]">
+                    {workspaceCopilot.focus}
+                  </p>
+                  {workspaceCopilot.actions.length > 0 && (
+                    <div className="mt-2 space-y-2">
+                      {workspaceCopilot.actions.slice(0, 3).map((action, index) => (
+                        <div
+                          key={`copilot-action-${index}`}
+                          className="rounded-xl border border-[#284675] bg-[#09142b]/70 px-3 py-2"
+                        >
+                          <p className="text-[11px] text-[#f2f6ff]">{action.title}</p>
+                          <p className="mt-1 text-[10px] text-[#9eb6e1]">{action.reason}</p>
+                          {action.ctaTab && (
+                            <button
+                              type="button"
+                              onClick={() => runCopilotAction(action)}
+                              className="mt-2 rounded-full border border-[#365a94] px-3 py-1 text-[10px] text-[#d6e5ff]"
+                            >
+                              Open {action.ctaTab}
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {workspaceCopilot.risks.length > 0 && (
+                    <p className="mt-2 text-[10px] text-[#ffcc9e]">
+                      Risk: {workspaceCopilot.risks[0]}
+                    </p>
+                  )}
+                  <p className="mt-2 text-[10px] text-[#9eb6e1]">
+                    Coach tip: {workspaceCopilot.coachTip}
+                  </p>
+                </div>
+              )}
+            </div>
 
             {activeTab === "active" && (
               <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_260px]">
@@ -4845,6 +6115,13 @@ export default function VendorDashboard() {
                           })()}
                         </div>
                       )}
+                      <button
+                        type="button"
+                        onClick={() => shareListingFromPortal(selectedPlot.id)}
+                        className="mt-3 w-full rounded-full border border-[#365a94] bg-[#09142b]/70 px-3 py-2 text-[11px] font-semibold text-[#d6e5ff]"
+                      >
+                        Share listing link
+                      </button>
                       <button
                         type="button"
                         onClick={() =>
@@ -5124,10 +6401,17 @@ export default function VendorDashboard() {
                                 doc(db, "inquiries", inquiry.id),
                                 {
                                   status: "responded",
+                                  pipelineStage: "qualified",
                                   respondedById: vendorId ?? "",
                                   respondedByName: userDisplayName ?? "Member",
                                   respondedAt: serverTimestamp(),
                                 }
+                              );
+                              await logAuditAction(
+                                "inquiry_marked_responded",
+                                "inquiry",
+                                inquiry.id,
+                                `Responded by ${userDisplayName ?? "Member"}`
                               );
                               setInquiries((current) =>
                                 current.map((item) =>
@@ -5135,6 +6419,7 @@ export default function VendorDashboard() {
                                     ? {
                                         ...item,
                                         status: "responded",
+                                        pipelineStage: "qualified",
                                         respondedById: vendorId ?? "",
                                         respondedByName:
                                           userDisplayName ?? "Member",
@@ -5191,18 +6476,88 @@ export default function VendorDashboard() {
                     />
                   )}
                 </div>
+                {isPortalAdmin && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAdvancedLeadOps((current) => !current)}
+                    className="rounded-full border border-[#365a94] bg-[#09142b]/70 px-3 py-1 text-[11px] text-[#d6e5ff]"
+                  >
+                    {showAdvancedLeadOps ? "Hide advanced lead ops" : "Show advanced lead ops"}
+                  </button>
+                )}
                 <div className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-3 text-xs text-[#c6d6f7]">
                   <p className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
                     SLA automation
                   </p>
                   <p className="mt-2">
-                    Response reminder: {Math.round(SLA_RESPONSE_REMINDER_MS / 3600000)}h
-                    . Reassign: {Math.round(INQUIRY_REASSIGN_AFTER_MS / 3600000)}h.
-                    Lead update reminder: {Math.round(SLA_UPDATE_REMINDER_MS / 3600000)}h.
-                    Lead inactivity reassign: {Math.round(SLA_UPDATE_REASSIGN_MS / 3600000)}h.
-                    Active window: {BUSINESS_START_HOUR}:00-{BUSINESS_END_HOUR}:00.
+                    Response reminder: {opsConfig.responseReminderHours}h.
+                    Reassign: {opsConfig.inquiryReassignHours}h.
+                    Lead update reminder: {opsConfig.leadUpdateReminderHours}h.
+                    Lead inactivity reassign: {opsConfig.leadUpdateReassignHours}h.
+                    Active window: {opsConfig.activeStartHour}:00-{opsConfig.activeEndHour}:00.
                   </p>
                 </div>
+                {isPortalAdmin && (
+                  <div className="grid gap-3 md:grid-cols-3">
+                    <div className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-3 text-xs">
+                      <p className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
+                        Forecast 7d
+                      </p>
+                      <p className="mt-2 text-sm font-semibold text-[#f2f6ff]">
+                        Ksh {forecastMetrics.expected7d.toLocaleString()}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-3 text-xs">
+                      <p className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
+                        Forecast 30d
+                      </p>
+                      <p className="mt-2 text-sm font-semibold text-[#f2f6ff]">
+                        Ksh {forecastMetrics.expected30d.toLocaleString()}
+                      </p>
+                    </div>
+                    <div className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-3 text-xs">
+                      <p className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
+                        Forecast 90d
+                      </p>
+                      <p className="mt-2 text-sm font-semibold text-[#f2f6ff]">
+                        Ksh {forecastMetrics.expected90d.toLocaleString()}
+                      </p>
+                      <p className="mt-1 text-[10px] text-[#9eb6e1]">
+                        Avg sale baseline: Ksh {forecastMetrics.avgSaleValue.toLocaleString()}
+                      </p>
+                    </div>
+                  </div>
+                )}
+                {isPortalAdmin && (
+                  <div className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-3 text-xs text-[#c6d6f7]">
+                    <p className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
+                      Revenue leakage detector
+                    </p>
+                    <div className="mt-2 max-h-40 space-y-2 overflow-y-auto">
+                      {leakageAlerts.length > 0 ? (
+                        leakageAlerts.map((alert) => (
+                          <div
+                            key={alert.id}
+                            className={`rounded-xl border px-3 py-2 ${
+                              alert.severity === "high"
+                                ? "border-[#8d3b3b] bg-[#2c1117] text-[#ffb1b1]"
+                                : alert.severity === "medium"
+                                ? "border-[#8b7040] bg-[#2a2211] text-[#f7d9a0]"
+                                : "border-[#365a94] bg-[#0d1f3f] text-[#c6d6f7]"
+                            }`}
+                          >
+                            <p className="text-[10px] font-semibold">{alert.title}</p>
+                            <p className="mt-1 text-[10px]">{alert.detail}</p>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="text-[10px] text-[#9eb6e1]">
+                          No leakage risks detected right now.
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
                 {agentScorecards.length > 0 && (
                   <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
                     {agentScorecards.map((card) => (
@@ -5226,6 +6581,301 @@ export default function VendorDashboard() {
                         </div>
                       </div>
                     ))}
+                  </div>
+                )}
+                {isPortalAdmin && showAdvancedLeadOps && (
+                  <div className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-4 text-xs text-[#c6d6f7]">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <p className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
+                        Ops rules
+                      </p>
+                      {opsConfigStatus && (
+                        <span className="text-[10px] text-[#9eb6e1]">{opsConfigStatus}</span>
+                      )}
+                    </div>
+                    <div className="mt-3 grid gap-2 md:grid-cols-2">
+                      <label className="space-y-1">
+                        <span>Assignment mode</span>
+                        <select
+                          value={opsConfig.assignmentMode}
+                          onChange={(event) =>
+                            setOpsConfig((current) => ({
+                              ...current,
+                              assignmentMode: event.target.value as AssignmentMode,
+                            }))
+                          }
+                          className="w-full rounded-2xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-xs text-[#e8eefc]"
+                        >
+                          <option value="least_load">Least load</option>
+                          <option value="round_robin">Round robin</option>
+                          <option value="random">Random</option>
+                        </select>
+                      </label>
+                      <label className="space-y-1">
+                        <span>VIP keyword</span>
+                        <input
+                          value={opsConfig.vipKeyword}
+                          onChange={(event) =>
+                            setOpsConfig((current) => ({
+                              ...current,
+                              vipKeyword: event.target.value,
+                            }))
+                          }
+                          className="w-full rounded-2xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-xs text-[#e8eefc]"
+                        />
+                      </label>
+                      <label className="space-y-1">
+                        <span>Response reminder (h)</span>
+                        <input
+                          type="number"
+                          min={1}
+                          value={opsConfig.responseReminderHours}
+                          onChange={(event) =>
+                            setOpsConfig((current) => ({
+                              ...current,
+                              responseReminderHours: Number(event.target.value),
+                            }))
+                          }
+                          className="w-full rounded-2xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-xs text-[#e8eefc]"
+                        />
+                      </label>
+                      <label className="space-y-1">
+                        <span>Inquiry reassign (h)</span>
+                        <input
+                          type="number"
+                          min={1}
+                          value={opsConfig.inquiryReassignHours}
+                          onChange={(event) =>
+                            setOpsConfig((current) => ({
+                              ...current,
+                              inquiryReassignHours: Number(event.target.value),
+                            }))
+                          }
+                          className="w-full rounded-2xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-xs text-[#e8eefc]"
+                        />
+                      </label>
+                      <label className="space-y-1">
+                        <span>Lead update reminder (h)</span>
+                        <input
+                          type="number"
+                          min={1}
+                          value={opsConfig.leadUpdateReminderHours}
+                          onChange={(event) =>
+                            setOpsConfig((current) => ({
+                              ...current,
+                              leadUpdateReminderHours: Number(event.target.value),
+                            }))
+                          }
+                          className="w-full rounded-2xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-xs text-[#e8eefc]"
+                        />
+                      </label>
+                      <label className="space-y-1">
+                        <span>Lead reassign (h)</span>
+                        <input
+                          type="number"
+                          min={1}
+                          value={opsConfig.leadUpdateReassignHours}
+                          onChange={(event) =>
+                            setOpsConfig((current) => ({
+                              ...current,
+                              leadUpdateReassignHours: Number(event.target.value),
+                            }))
+                          }
+                          className="w-full rounded-2xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-xs text-[#e8eefc]"
+                        />
+                      </label>
+                      <label className="space-y-1">
+                        <span>Agent commission %</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={30}
+                          step="0.1"
+                          value={opsConfig.agentCommissionPct}
+                          onChange={(event) =>
+                            setOpsConfig((current) => ({
+                              ...current,
+                              agentCommissionPct: Number(event.target.value),
+                            }))
+                          }
+                          className="w-full rounded-2xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-xs text-[#e8eefc]"
+                        />
+                      </label>
+                      <label className="space-y-1">
+                        <span>Manager commission %</span>
+                        <input
+                          type="number"
+                          min={0}
+                          max={20}
+                          step="0.1"
+                          value={opsConfig.managerCommissionPct}
+                          onChange={(event) =>
+                            setOpsConfig((current) => ({
+                              ...current,
+                              managerCommissionPct: Number(event.target.value),
+                            }))
+                          }
+                          className="w-full rounded-2xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-xs text-[#e8eefc]"
+                        />
+                      </label>
+                      <label className="space-y-1">
+                        <span>Business window (24h)</span>
+                        <div className="grid grid-cols-2 gap-2">
+                          <input
+                            type="number"
+                            min={0}
+                            max={23}
+                            value={opsConfig.activeStartHour}
+                            onChange={(event) =>
+                              setOpsConfig((current) => ({
+                                ...current,
+                                activeStartHour: Number(event.target.value),
+                              }))
+                            }
+                            className="w-full rounded-2xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-xs text-[#e8eefc]"
+                          />
+                          <input
+                            type="number"
+                            min={1}
+                            max={24}
+                            value={opsConfig.activeEndHour}
+                            onChange={(event) =>
+                              setOpsConfig((current) => ({
+                                ...current,
+                                activeEndHour: Number(event.target.value),
+                              }))
+                            }
+                            className="w-full rounded-2xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-xs text-[#e8eefc]"
+                          />
+                        </div>
+                      </label>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={saveOpsConfiguration}
+                      disabled={opsConfigSaving}
+                      className="mt-3 rounded-full bg-[#2454a0] px-4 py-2 text-[11px] font-semibold text-white disabled:opacity-60"
+                    >
+                      {opsConfigSaving ? "Saving..." : "Save rules"}
+                    </button>
+                  </div>
+                )}
+                {isPortalAdmin && showAdvancedLeadOps && (
+                  <div className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-4 text-xs text-[#c6d6f7]">
+                    <p className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
+                      Manager controls
+                    </p>
+                    <div className="mt-3 grid gap-2 md:grid-cols-3">
+                      <div className="rounded-xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2">
+                        <p className="text-[10px] text-[#9eb6e1]">Uncontacted queue</p>
+                        <p className="mt-1 text-sm font-semibold text-[#f2f6ff]">
+                          {managerQueues.uncontacted.length}
+                        </p>
+                      </div>
+                      <div className="rounded-xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2">
+                        <p className="text-[10px] text-[#9eb6e1]">Overdue follow-ups</p>
+                        <p className="mt-1 text-sm font-semibold text-[#f2f6ff]">
+                          {managerQueues.overdueFollowUps.length}
+                        </p>
+                      </div>
+                      <div className="rounded-xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2">
+                        <p className="text-[10px] text-[#9eb6e1]">Stuck deals</p>
+                        <p className="mt-1 text-sm font-semibold text-[#f2f6ff]">
+                          {managerQueues.stuckDeals.length}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="mt-3 max-h-44 overflow-y-auto space-y-2">
+                      {[...managerQueues.uncontacted, ...managerQueues.overdueFollowUps, ...managerQueues.stuckDeals]
+                        .filter((lead, index, arr) => arr.findIndex((item) => item.id === lead.id) === index)
+                        .slice(0, 20)
+                        .map((lead) => (
+                          <label
+                            key={`mgr-queue-${lead.id}`}
+                            className="flex items-center justify-between gap-2 rounded-xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2"
+                          >
+                            <div>
+                              <p className="text-[11px] text-[#f2f6ff]">
+                                {lead.buyer} - {lead.parcel}
+                              </p>
+                              <p className="text-[10px] text-[#9eb6e1]">
+                                {lead.assignedAgentName || "Unassigned"}
+                              </p>
+                            </div>
+                            <input
+                              type="checkbox"
+                              checked={managerSelectedLeadIds.includes(lead.id)}
+                              onChange={() => toggleManagerLeadSelection(lead.id)}
+                            />
+                          </label>
+                        ))}
+                    </div>
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <select
+                        value={managerBulkAgentId}
+                        onChange={(event) => setManagerBulkAgentId(event.target.value)}
+                        className="rounded-full border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-[11px] text-[#e8eefc]"
+                      >
+                        <option value="">Select agent for reassign</option>
+                        {assignableAgents.map((agent) => (
+                          <option key={`bulk-agent-${agent.id}`} value={agent.id}>
+                            {agent.name || agent.email}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => runManagerBulkAction("reassign")}
+                        className="rounded-full bg-[#2454a0] px-3 py-2 text-[10px] font-semibold text-white"
+                      >
+                        Bulk reassign
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => runManagerBulkAction("nudge")}
+                        className="rounded-full border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-[10px] text-[#d6e5ff]"
+                      >
+                        Bulk nudge
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => runManagerBulkAction("escalate")}
+                        className="rounded-full border border-[#365a94] bg-[#0d1f3f] px-3 py-2 text-[10px] text-[#d6e5ff]"
+                      >
+                        Bulk escalate
+                      </button>
+                    </div>
+                    {managerActionStatus && (
+                      <p className="mt-2 text-[10px] text-[#9eb6e1]">{managerActionStatus}</p>
+                    )}
+                  </div>
+                )}
+                {isPortalAdmin && showAdvancedLeadOps && (
+                  <div className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-3 text-xs text-[#c6d6f7]">
+                    <p className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
+                      Audit timeline
+                    </p>
+                    <div className="mt-2 max-h-40 space-y-2 overflow-y-auto">
+                      {auditLogs.slice(0, 12).map((log) => (
+                        <div
+                          key={`audit-${log.id}`}
+                          className="rounded-xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2"
+                        >
+                          <p className="text-[10px] text-[#f2f6ff]">
+                            {log.action.replaceAll("_", " ")} - {log.entityType} {log.entityId}
+                          </p>
+                          <p className="mt-1 text-[10px] text-[#9eb6e1]">
+                            {log.actorName} - {log.createdAtLabel}
+                          </p>
+                          {log.details && (
+                            <p className="mt-1 text-[10px] text-[#c6d6f7]">{log.details}</p>
+                          )}
+                        </div>
+                      ))}
+                      {auditLogs.length === 0 && (
+                        <p className="text-[10px] text-[#9eb6e1]">No audit events yet.</p>
+                      )}
+                    </div>
                   </div>
                 )}
                 <div className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-3 text-xs">
@@ -5341,6 +6991,11 @@ export default function VendorDashboard() {
                           {(lead.status ?? "responded") === "successful"
                             ? "Successful"
                             : "Responded"}
+                        </span>
+                        <span className="rounded-full border border-[#365a94] bg-[#0d1f3f] px-3 py-1 text-[10px] text-[#c6d6f7]">
+                          {(lead.pipelineStage ?? "qualified")
+                            .replaceAll("_", " ")
+                            .replace(/\b\w/g, (char) => char.toUpperCase())}
                         </span>
                         <span className="rounded-full border border-[#365a94] px-3 py-1 text-[10px] text-[#c6d6f7]">
                           Open
@@ -5708,6 +7363,43 @@ export default function VendorDashboard() {
                     />
                   )}
                 </div>
+                {isPortalAdmin && (
+                  <div className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-3 text-xs text-[#c6d6f7]">
+                    <p className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
+                      Collections cockpit
+                    </p>
+                    <div className="mt-2 grid gap-2 md:grid-cols-3">
+                      <div className="rounded-xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2">
+                        <p className="text-[10px] text-[#9eb6e1]">Overdue accounts</p>
+                        <p className="mt-1 text-sm font-semibold text-[#f2f6ff]">
+                          {collectionsMetrics.overdue.length}
+                        </p>
+                      </div>
+                      <div className="rounded-xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2">
+                        <p className="text-[10px] text-[#9eb6e1]">Due in 7 days</p>
+                        <p className="mt-1 text-sm font-semibold text-[#f2f6ff]">
+                          {collectionsMetrics.dueSoon.length}
+                        </p>
+                      </div>
+                      <div className="rounded-xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2">
+                        <p className="text-[10px] text-[#9eb6e1]">At-risk accounts</p>
+                        <p className="mt-1 text-sm font-semibold text-[#f2f6ff]">
+                          {collectionsMetrics.atRisk.length}
+                        </p>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={sendCollectionsNudges}
+                      className="mt-3 rounded-full bg-[#2454a0] px-4 py-2 text-[11px] font-semibold text-white"
+                    >
+                      Send overdue nudges
+                    </button>
+                    {collectionsStatus && (
+                      <p className="mt-2 text-[10px] text-[#9eb6e1]">{collectionsStatus}</p>
+                    )}
+                  </div>
+                )}
                 {visiblePendingSales
                   .filter((sale) =>
                     searchText.pending
@@ -5997,6 +7689,63 @@ export default function VendorDashboard() {
                     />
                   )}
                 </div>
+                {isPortalAdmin && (
+                  <div className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-3 text-xs text-[#c6d6f7]">
+                    <p className="text-[10px] uppercase tracking-[0.25em] text-[#d1a741]">
+                      Commission engine
+                    </p>
+                    <p className="mt-1 text-[10px] text-[#9eb6e1]">
+                      Agent rate: {opsConfig.agentCommissionPct}% · Manager rate: {opsConfig.managerCommissionPct}%
+                    </p>
+                    <p className="mt-1 text-[10px] text-[#9eb6e1]">
+                      Manager commission due: Ksh {commissionSummary.managerCommissionDue.toLocaleString()}
+                    </p>
+                    <button
+                      type="button"
+                      onClick={exportCommissionPayrollCsv}
+                      className="mt-2 rounded-full border border-[#365a94] bg-[#0d1f3f] px-3 py-1 text-[10px] text-[#d6e5ff]"
+                    >
+                      Export payroll CSV
+                    </button>
+                    <div className="mt-3 space-y-2">
+                      {commissionSummary.rows.length > 0 ? (
+                        commissionSummary.rows.map((row) => (
+                          <div
+                            key={`commission-${row.agentId}`}
+                            className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-[#365a94] bg-[#0d1f3f] px-3 py-2"
+                          >
+                            <div>
+                              <p className="text-[11px] text-[#f2f6ff]">{row.agentName}</p>
+                              <p className="text-[10px] text-[#9eb6e1]">
+                                Due: Ksh {row.due.toLocaleString()} · Paid: Ksh {row.paid.toLocaleString()} · Outstanding: Ksh {row.outstanding.toLocaleString()}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => markAgentCommissionPaid(row.agentId)}
+                              disabled={row.outstanding <= 0 || commissionPayingAgentId === row.agentId}
+                              className="rounded-full bg-[#2454a0] px-3 py-1 text-[10px] font-semibold text-white disabled:opacity-60"
+                            >
+                              {commissionPayingAgentId === row.agentId
+                                ? "Paying..."
+                                : row.outstanding > 0
+                                ? "Mark payout"
+                                : "Paid"}
+                            </button>
+                          </div>
+                        ))
+                      ) : (
+                        <p className="text-[10px] text-[#9eb6e1]">No sales commission due yet.</p>
+                      )}
+                    </div>
+                    {commissionActionStatus && (
+                      <p className="mt-2 text-[10px] text-[#9eb6e1]">{commissionActionStatus}</p>
+                    )}
+                    {payrollStatus && (
+                      <p className="mt-1 text-[10px] text-[#9eb6e1]">{payrollStatus}</p>
+                    )}
+                  </div>
+                )}
                 {visibleSales
                   .filter((sale) =>
                     searchText.sales
@@ -6684,6 +8433,105 @@ export default function VendorDashboard() {
                     {lead.nextFollowUpAt && (
                       <p>Next follow-up: {new Date(lead.nextFollowUpAt).toLocaleString()}</p>
                     )}
+                  </div>
+                  <div className="mt-3 rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-3 text-xs text-[#c6d6f7]">
+                    <p className="text-[10px] uppercase tracking-[0.2em] text-[#d1a741]">
+                      CRM pipeline stage
+                    </p>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <select
+                        value={leadPipelineStage ?? "qualified"}
+                        onChange={(event) =>
+                          setLeadPipelineStage(
+                            event.target.value as Inquiry["pipelineStage"]
+                          )
+                        }
+                        className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-xs text-[#f2f6ff]"
+                      >
+                        <option value="new">New</option>
+                        <option value="qualified">Qualified</option>
+                        <option value="visit_scheduled">Visit scheduled</option>
+                        <option value="offer_made">Offer made</option>
+                        <option value="negotiation">Negotiation</option>
+                        <option value="won">Won</option>
+                        <option value="lost">Lost</option>
+                      </select>
+                      <button
+                        type="button"
+                        onClick={updateLeadPipelineStage}
+                        disabled={leadStageSaving}
+                        className="rounded-full bg-[#2454a0] px-3 py-2 text-[10px] font-semibold text-white disabled:opacity-60"
+                      >
+                        {leadStageSaving ? "Saving..." : "Update stage"}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="mt-3 rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-3 text-xs text-[#c6d6f7]">
+                    <p className="text-[10px] uppercase tracking-[0.2em] text-[#d1a741]">
+                      Financing pre-qualification
+                    </p>
+                    <div className="mt-2 grid gap-2 md:grid-cols-2">
+                      <input
+                        type="text"
+                        value={financeBudget}
+                        onChange={(event) => setFinanceBudget(event.target.value)}
+                        placeholder="Budget range (e.g. Ksh 2M-3M)"
+                        className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-xs text-[#f2f6ff]"
+                      />
+                      <input
+                        type="number"
+                        min={0}
+                        value={financeIncome}
+                        onChange={(event) => setFinanceIncome(event.target.value)}
+                        placeholder="Monthly income"
+                        className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-xs text-[#f2f6ff]"
+                      />
+                      <select
+                        value={financeReady}
+                        onChange={(event) =>
+                          setFinanceReady(
+                            event.target.value as "yes" | "no" | "unknown"
+                          )
+                        }
+                        className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-xs text-[#f2f6ff]"
+                      >
+                        <option value="unknown">Financing readiness: Unknown</option>
+                        <option value="yes">Financing readiness: Yes</option>
+                        <option value="no">Financing readiness: No</option>
+                      </select>
+                      <select
+                        value={prequalStatus}
+                        onChange={(event) =>
+                          setPrequalStatus(
+                            event.target.value as
+                              | "not_started"
+                              | "in_review"
+                              | "qualified"
+                              | "not_qualified"
+                          )
+                        }
+                        className="rounded-2xl border border-[#284675] bg-[#09142b]/70 px-3 py-2 text-xs text-[#f2f6ff]"
+                      >
+                        <option value="not_started">Prequal not started</option>
+                        <option value="in_review">Prequal in review</option>
+                        <option value="qualified">Prequal qualified</option>
+                        <option value="not_qualified">Prequal not qualified</option>
+                      </select>
+                    </div>
+                    <div className="mt-2 flex items-center justify-between">
+                      <p className="text-[10px] text-[#9eb6e1]">
+                        Current score: {lead.prequalScore ?? 0}/100
+                      </p>
+                      <button
+                        type="button"
+                        onClick={saveLeadPrequalification}
+                        disabled={prequalSaving}
+                        className="rounded-full bg-[#2454a0] px-3 py-2 text-[10px] font-semibold text-white disabled:opacity-60"
+                      >
+                        {prequalSaving ? "Saving..." : "Save prequal"}
+                      </button>
+                    </div>
                   </div>
 
                   <div className="mt-4 rounded-2xl border border-[#284675] bg-[#09142b]/70 px-4 py-3">

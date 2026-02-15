@@ -13,6 +13,7 @@ export default function Home() {
   const [hydrated, setHydrated] = useState(false);
   const [isMobileViewport, setIsMobileViewport] = useState(false);
   const [mobileMapOffset, setMobileMapOffset] = useState(136);
+  const [sharedListingId, setSharedListingId] = useState("");
   const plots: Plot[] = [];
 
   useEffect(() => {
@@ -44,6 +45,8 @@ export default function Home() {
     updateViewportSizing();
     window.addEventListener("resize", updateViewportSizing);
     window.addEventListener("orientationchange", updateViewportSizing);
+    const params = new URLSearchParams(window.location.search);
+    setSharedListingId(params.get("listing")?.trim() ?? "");
     return () => {
       window.removeEventListener("resize", updateViewportSizing);
       window.removeEventListener("orientationchange", updateViewportSizing);
@@ -216,6 +219,13 @@ export default function Home() {
       Array.from(new Set(allPlots.flatMap((plot) => plot.amenities))).sort(),
     [allPlots]
   );
+  const sharedListingPlot = useMemo(
+    () =>
+      sharedListingId
+        ? allPlots.find((plot) => plot.id === sharedListingId) ?? null
+        : null,
+    [allPlots, sharedListingId]
+  );
 
   const [selectedVendor, setSelectedVendor] = useState("All vendors");
   const [vendorType, setVendorType] = useState<"All" | "Company" | "Individual">(
@@ -243,6 +253,9 @@ export default function Home() {
   };
 
   const filteredPlots = useMemo(() => {
+    if (sharedListingPlot) {
+      return [sharedListingPlot];
+    }
     const min = Number(minPriceFilter.replace(/[^0-9.]/g, ""));
     const max = Number(maxPriceFilter.replace(/[^0-9.]/g, ""));
     return allPlots.filter((plot) => {
@@ -272,6 +285,7 @@ export default function Home() {
     minPriceFilter,
     selectedAmenities,
     selectedVendor,
+    sharedListingPlot,
     vendorType,
   ]);
 
@@ -550,6 +564,7 @@ export default function Home() {
             }))}
             onFiltersClick={() => setFiltersOpen(true)}
             compactMobile
+            autoOpenPlotId={sharedListingPlot?.id ?? null}
           />
 
           <div className="pointer-events-none absolute left-3 top-3 max-w-[calc(100%-1.5rem)] truncate rounded-full bg-white/80 px-3 py-1 text-[11px] font-semibold text-[#1f3d2d] backdrop-blur sm:left-6 sm:top-6 sm:max-w-none sm:text-xs">
